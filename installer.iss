@@ -1,5 +1,5 @@
 #define AppName "GT7 Race Control Écurie"
-#define AppVersion "0.1.0"
+#define AppVersion "0.4.0"
 #define AppExe "GT7-Race-Control-Ecurie.exe"
 [Setup]
 AppId={{D31D124A-11B1-4C80-9E0A-9B9FBB2BB0A3}
