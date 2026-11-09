@@ -40,7 +40,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
   windows-installer:
-    name: Application et installateur Windows 0.8.1 (test)
+    name: Application et installateur Windows 0.9.0 (test)
     needs: tests
     runs-on: windows-latest
     timeout-minutes: 35
@@ -76,25 +76,25 @@ jobs:
       - name: Installer et lancer la version construite
         shell: pwsh
         run: |
-          $installer = (Resolve-Path "Output\GT7-Race-Control-Ecurie-Setup-0.8.1-test.exe").Path
+          $installer = (Resolve-Path "Output\GT7-Race-Control-Ecurie-Setup-0.9.0-test.exe").Path
           $destination = "${{ runner.temp }}\GT7 Installed Test"
-          python scripts/check_windows_update_install.py --installer "$installer" --destination "$destination" --version 0.8.1
+          python scripts/check_windows_update_install.py --installer "$installer" --destination "$destination" --version 0.9.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build_windows.ps1 -SmokeOnly -Executable "$destination\GT7-Race-Control-Ecurie.exe" -SmokeDirectory "${{ runner.temp }}\gt7-smoke-installed"
       - name: Préparer l'archive portable et les empreintes
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\GT7-Race-Control-Ecurie -DestinationPath Output\GT7-Race-Control-Ecurie-Portable-0.8.1-test.zip
+          Compress-Archive -Path dist\GT7-Race-Control-Ecurie -DestinationPath Output\GT7-Race-Control-Ecurie-Portable-0.9.0-test.zip
           Get-ChildItem Output -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | ForEach-Object {
             $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($_.Name)"
           } | Set-Content Output\SHA256SUMS.txt -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: GT7-Race-Control-Ecurie-Windows-0.8.1-test
+          name: GT7-Race-Control-Ecurie-Windows-0.9.0-test
           path: |
-            Output/GT7-Race-Control-Ecurie-Setup-0.8.1-test.exe
-            Output/GT7-Race-Control-Ecurie-Portable-0.8.1-test.zip
+            Output/GT7-Race-Control-Ecurie-Setup-0.9.0-test.exe
+            Output/GT7-Race-Control-Ecurie-Portable-0.9.0-test.zip
             Output/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -110,7 +110,7 @@ jobs:
           retention-days: 14
 
   publish-test:
-    name: Publier la préversion Test 0.8.1 vérifiée
+    name: Publier la préversion Test 0.9.0 vérifiée
     needs: [tests, windows-installer]
     if: >-
       github.repository == 'glili35/GT7-Race-Control-Ecurie' &&
@@ -129,7 +129,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
-          name: GT7-Race-Control-Ecurie-Windows-0.8.1-test
+          name: GT7-Race-Control-Ecurie-Windows-0.9.0-test
           path: release-assets
       - name: Installer les dépendances du client de mises à jour
         run: python -m pip install -r requirements.txt
@@ -137,10 +137,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          python scripts/publish_test.py --version 0.8.1
+          python scripts/publish_test.py --version 0.9.0
           --artifact-dir release-assets --target-sha "${{ github.sha }}"
       - name: Vérifier la mise à jour publique sans authentification
         run: >-
-          python scripts/publish_test.py --verify-public --version 0.8.1
-          --previous-version 0.8.0 --artifact-dir release-assets
+          python scripts/publish_test.py --verify-public --version 0.9.0
+          --previous-version 0.8.1 --artifact-dir release-assets
           --target-sha "${{ github.sha }}"

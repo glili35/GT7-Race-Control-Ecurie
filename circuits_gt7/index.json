@@ -4,10 +4,10 @@
  "bundle_format_version": 5,
  "counts": {
   "configurations": 122,
-  "surveyed": 27,
-  "points": 135705,
-  "corners_labelled": 139,
-  "corrected": 8
+  "surveyed": 32,
+  "points": 149016,
+  "corners_labelled": 162,
+  "corrected": 9
  },
  "unmatched_bundles": [],
  "configurations": [
@@ -1023,7 +1023,21 @@
    "type": "original",
    "reverse": true,
    "slug": "dragon-trail-gardens-reverse",
-   "bundle": null
+   "bundle": {
+    "file": "tracks/dragon-trail-gardens-reverse.json",
+    "track": "Dragon Trail - Gardens (Reverse)",
+    "points": 134,
+    "manual_points": 0,
+    "elevation_pct": 100.0,
+    "runs": 1,
+    "sources": 1,
+    "finish_crossings": 2,
+    "corners": 0,
+    "sections": 0,
+    "sectors": 0,
+    "updated_at": "2026-10-29T01:41:22.560692+00:00",
+    "bytes": 21676
+   }
   },
   {
    "official_id": "8d429d",
@@ -1431,6 +1445,7 @@
    "slug": "mount-panorama-motor-racing-circuit",
    "bundle": {
     "file": "tracks/mount-panorama-motor-racing-circuit.json",
+    "corrections": "corrections/mount-panorama-motor-racing-circuit.json",
     "track": "Mount Panorama Motor Racing Circuit",
     "points": 6642,
     "manual_points": 2535,
@@ -1765,7 +1780,21 @@
    "type": "real",
    "reverse": false,
    "slug": "sugo-international-racing-course",
-   "bundle": null
+   "bundle": {
+    "file": "tracks/sugo-international-racing-course.json",
+    "track": "SUGO International Racing Course",
+    "points": 3946,
+    "manual_points": 3742,
+    "elevation_pct": 100.0,
+    "runs": 1,
+    "sources": 1,
+    "finish_crossings": 6,
+    "corners": 14,
+    "sections": 1,
+    "sectors": 0,
+    "updated_at": "2026-11-05T11:14:50.692418+00:00",
+    "bytes": 605465
+   }
   },
   {
    "official_id": "6e378b",
@@ -1807,7 +1836,21 @@
    "type": "real",
    "reverse": false,
    "slug": "suzuka-circuit-east-course",
-   "bundle": null
+   "bundle": {
+    "file": "tracks/suzuka-circuit-east-course.json",
+    "track": "Suzuka Circuit East Course",
+    "points": 2968,
+    "manual_points": 2375,
+    "elevation_pct": 100.0,
+    "runs": 1,
+    "sources": 1,
+    "finish_crossings": 3,
+    "corners": 9,
+    "sections": 1,
+    "sectors": 0,
+    "updated_at": "2026-09-29T13:05:58.921886+00:00",
+    "bytes": 463296
+   }
   },
   {
    "official_id": "779efe",
@@ -1877,7 +1920,21 @@
    "type": "original",
    "reverse": false,
    "slug": "tokyo-expressway-central-clockwise",
-   "bundle": null
+   "bundle": {
+    "file": "tracks/tokyo-expressway-central-clockwise.json",
+    "track": "Tokyo Expressway - Central Clockwise",
+    "points": 4238,
+    "manual_points": 4238,
+    "elevation_pct": 100.0,
+    "runs": 1,
+    "sources": 1,
+    "finish_crossings": 4,
+    "corners": 0,
+    "sections": 0,
+    "sectors": 0,
+    "updated_at": "2026-11-07T16:40:01.859362+00:00",
+    "bytes": 636763
+   }
   },
   {
    "official_id": "dcdc93",
@@ -2075,7 +2132,21 @@
    "type": "real",
    "reverse": false,
    "slug": "willow-springs-international-raceway-horse-thief-mile",
-   "bundle": null
+   "bundle": {
+    "file": "tracks/willow-springs-international-raceway-horse-thief-mile.json",
+    "track": "Willow Springs International Raceway: Horse Thief Mile",
+    "points": 2025,
+    "manual_points": 106,
+    "elevation_pct": 100.0,
+    "runs": 1,
+    "sources": 1,
+    "finish_crossings": 2,
+    "corners": 0,
+    "sections": 0,
+    "sectors": 0,
+    "updated_at": "2026-09-23T09:19:44.248077+00:00",
+    "bytes": 321901
+   }
   },
   {
    "official_id": "bcfdfc",

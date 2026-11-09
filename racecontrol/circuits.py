@@ -43,6 +43,22 @@ class CornerPoint:
 
 
 @dataclass(frozen=True)
+class CornerSet:
+    """Repères d'une configuration exacte, avec leur provenance.
+
+    ``documented`` désigne un jeu documenté par sa source, sans certification
+    officielle. ``partial`` signale une couverture partielle ou non confirmée ;
+    ``missing`` et ``invalid`` ne fournissent aucun repère à dessiner.
+    """
+
+    points: tuple[CornerPoint, ...]
+    status: str
+    source: str
+    revision: str
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class BulkInstallResult:
     """Bilan par nom de configuration, pas une promesse de couverture complète."""
 
@@ -111,7 +127,10 @@ def _parse_corners(content: bytes) -> tuple[CornerPoint, ...]:
         raise CircuitLibraryError("Le fichier de circuit ne contient pas un JSON valide.") from exc
     if not isinstance(data, dict):
         raise CircuitLibraryError("Le fichier de circuit doit contenir un objet JSON.")
-    corners = data.get("corners")
+    return _corner_points(data.get("corners"))
+
+
+def _corner_points(corners: object) -> tuple[CornerPoint, ...]:
     if corners is None:
         return ()
     if not isinstance(corners, list) or len(corners) > 1000:
@@ -148,13 +167,19 @@ def _parse_corners(content: bytes) -> tuple[CornerPoint, ...]:
 
 
 class CircuitLibrary:
-    def __init__(self, cache_dir: Path | str | None = None, index_path: Path | str | None = None):
+    def __init__(self, cache_dir: Path | str | None = None, index_path: Path | str | None = None,
+                 overlay_path: Path | str | None = None):
         self.cache_dir = Path(cache_dir) if cache_dir is not None else CACHE
         self.index_path = Path(index_path) if index_path is not None else INDEX
+        self.overlay_path = Path(overlay_path) if overlay_path is not None else self.index_path.with_name("corners.json")
         self.entrees: dict[str, dict] = {}
         self.noms: list[str] = []
         self.erreur_catalogue: str | None = None
         self._erreurs_cache: dict[str, str] = {}
+        self._erreurs_virages: dict[str, str] = {}
+        self._corner_overlay: dict[str, object] = {}
+        self._corner_revision = ""
+        self._corner_overlay_error: str | None = None
         self._lock = RLock()
         self._installation_lock = RLock()
         try:
@@ -177,6 +202,28 @@ class CircuitLibrary:
             self.noms = sorted(entries)
         except (OSError, ValueError, UnicodeError, TypeError) as exc:
             self.erreur_catalogue = f"Catalogue des circuits indisponible : {exc}"
+        self._read_corner_overlay()
+
+    def _read_corner_overlay(self) -> None:
+        """Lit une ressource facultative ; ne crée ni cache ni connexion."""
+        try:
+            data = json.loads(_read_bounded(self.overlay_path, MAX_INDEX_BYTES))
+            if (not isinstance(data, dict) or type(data.get("schema_version")) is not int
+                    or data["schema_version"] != 1):
+                raise CircuitLibraryError("Format des annotations embarquées incorrect.")
+            revision, entries = data.get("revision"), data.get("configurations")
+            if not isinstance(revision, str) or not revision.strip() or len(revision) > 128:
+                raise CircuitLibraryError("Révision des annotations embarquées incorrecte.")
+            if not isinstance(entries, dict) or len(entries) > 2048:
+                raise CircuitLibraryError("Liste des annotations embarquées incorrecte.")
+            if any(not isinstance(key, str) or not key or len(key) > 128 for key in entries):
+                raise CircuitLibraryError("Identifiant de configuration annotée incorrect.")
+            self._corner_revision = revision
+            self._corner_overlay = entries
+        except FileNotFoundError:
+            pass  # Un catalogue historique sans overlay reste utilisable.
+        except (OSError, ValueError, UnicodeError, TypeError) as exc:
+            self._corner_overlay_error = f"Annotations des virages indisponibles : {exc}"
 
     def _entry(self, nom: str) -> dict:
         if self.erreur_catalogue:
@@ -207,7 +254,14 @@ class CircuitLibrary:
     def erreur_cache(self, nom: str) -> str | None:
         """Dernière erreur de lecture locale, à afficher près du bouton installer."""
         with self._lock:
-            return self._erreurs_cache.get(nom)
+            return self._erreurs_cache.get(nom) or self._erreurs_virages.get(nom)
+
+    def _remember_corner_error(self, nom: str, message: str | None) -> None:
+        with self._lock:
+            if message is None:
+                self._erreurs_virages.pop(nom, None)
+            else:
+                self._erreurs_virages[nom] = message
 
     def _remember_error(self, nom: str, message: str | None) -> None:
         with self._lock:
@@ -238,28 +292,89 @@ class CircuitLibrary:
         return points
 
     def charger_virages(self, nom: str) -> tuple[CornerPoint, ...]:
-        """Lit seulement les ancres numérotées présentes dans le cache local.
+        """Compatibilité : repères exacts, sans téléchargement ni modification."""
+        return self.annotations_virages(nom).points
 
-        Aucun numéro n'est déduit de la courbure ni du compteur GT7. Les caches
-        anciens sans annotations restent compatibles. Des annotations invalides
-        renvoient () et renseignent erreur_cache(nom), sans rendre les bordures
-        inutilisables. Cette méthode ne télécharge et ne modifie aucun fichier.
+    def annotations_virages(self, nom: str) -> CornerSet:
+        """Préfère les annotations embarquées propres à l'identifiant GT7.
+
+        Un overlay explicite remplace les annotations du cache historique,
+        même s'il indique leur absence. Aucun repère ni sens inverse n'est
+        déduit de la géométrie. Une erreur n'invalide jamais les bordures.
         """
+        if self.erreur_catalogue:
+            return CornerSet((), "missing", "", "")
+        entry = self._entry(nom)
+        if self._corner_overlay_error:
+            self._remember_corner_error(nom, self._corner_overlay_error)
+            return CornerSet((), "invalid", "", self._corner_revision)
+        identifier = entry.get("official_id")
+        if isinstance(identifier, str) and identifier in self._corner_overlay:
+            try:
+                result = self._overlay_corners(self._corner_overlay[identifier])
+            except (ValueError, TypeError) as exc:
+                self._remember_corner_error(nom, f"Annotations des virages indisponibles : {exc}")
+                return CornerSet((), "invalid", "", self._corner_revision)
+            self._remember_corner_error(nom, None)
+            return result
+        return self._cached_corners(nom, entry)
+
+    def _overlay_corners(self, item: object) -> CornerSet:
+        if not isinstance(item, dict):
+            raise CircuitLibraryError("Jeu de virages incorrect.")
+        status, source, raw_points = item.get("status"), item.get("source"), item.get("corners")
+        if status not in ("documented", "partial", "missing"):
+            raise CircuitLibraryError("Statut des virages incorrect.")
+        if (not isinstance(source, str) or len(source) > 2048
+                or (status != "missing" and not source.strip())):
+            raise CircuitLibraryError("Source des virages incorrecte.")
+        if not isinstance(raw_points, list):
+            raise CircuitLibraryError("Liste des virages incorrecte.")
+        points = _corner_points(raw_points)
+        if (status == "missing") != (not points):
+            raise CircuitLibraryError("Le statut et les repères de virage sont incohérents.")
+        expected = item.get("expected_turns")
+        if expected is not None and (type(expected) is not int or not 1 <= expected <= 1000):
+            raise CircuitLibraryError("Nombre de virages annoncé incorrect.")
+        note = item.get("note", "")
+        if not isinstance(note, str) or len(note) > 2000:
+            raise CircuitLibraryError("Note sur les virages incorrecte.")
+        return CornerSet(points, status, source.strip(), self._corner_revision, note.strip())
+
+    def _cached_corners(self, nom: str, entry: dict) -> CornerSet:
+        """Repli historique ; un retour n'hérite jamais des repères de l'aller."""
         path = self.chemin(nom)
         if path is None:
-            return ()
+            self._remember_corner_error(nom, None)
+            return CornerSet((), "missing", "", "")
         try:
             content = _read_bounded(path, MAX_DOWNLOAD_BYTES)
             _parse_points(content)
             corners = _parse_corners(content)
+            data = json.loads(content)
+            meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+            official = meta.get("official") if isinstance(meta.get("official"), dict) else {}
+            cached_id, wanted_id = official.get("official_id"), entry.get("official_id")
+            if cached_id and wanted_id and cached_id != wanted_id:
+                raise CircuitLibraryError("Ces repères appartiennent à une autre configuration.")
+            if corners and entry.get("reverse") is True:
+                if not wanted_id or cached_id != wanted_id or official.get("reverse") is not True:
+                    self._remember_corner_error(nom, None)
+                    return CornerSet((), "missing", "", "")
+            elif corners and official.get("reverse") is True:
+                raise CircuitLibraryError("Ces repères appartiennent à un autre sens du circuit.")
         except FileNotFoundError:
-            self._remember_error(nom, None)
-            return ()
+            self._remember_corner_error(nom, None)
+            return CornerSet((), "missing", "", "")
         except (OSError, ValueError, TypeError) as exc:
-            self._remember_error(nom, f"Annotations des virages indisponibles : {exc}")
-            return ()
-        self._remember_error(nom, None)
-        return corners
+            self._remember_corner_error(nom, f"Annotations des virages indisponibles : {exc}")
+            return CornerSet((), "invalid", "", "")
+        self._remember_corner_error(nom, None)
+        if not corners:
+            return CornerSet((), "missing", "", "")
+        revision = meta.get("updated_at", "")
+        revision = revision if isinstance(revision, str) and len(revision) <= 128 else ""
+        return CornerSet(corners, "partial", "Cache local historique", revision)
 
     def est_installe(self, nom: str) -> bool:
         """Vrai seulement si le cache contient réellement des points exploitables."""

@@ -1,4 +1,4 @@
-# GT7 Race Control Écurie — 0.8.1 Test
+# GT7 Race Control Écurie — 0.9.0 Test
 
 Un poste ingénieur pour réunir les télémétries de **quatre pilotes GT7**, chacun
 avec sa PlayStation et son PC Windows. La même application propose un mode
@@ -8,17 +8,17 @@ pilote, un mur des stands et une démonstration clairement identifiée.
 
 ## Télécharger et lancer sur Windows
 
-1. Télécharger [l'installateur Windows 0.8.1 Test](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/download/test-v0.8.1/GT7-Race-Control-Ecurie-Setup-0.8.1-test.exe), pour une première installation ou pour corriger la mise à jour depuis 0.7/0.8.
-2. Arrêter la capture et fermer la version en cours, puis lancer `GT7-Race-Control-Ecurie-Setup-0.8.1-test.exe`.
+1. Depuis 0.8.1 ou une version ultérieure, ouvrir **Mises à jour**. Pour une première installation ou depuis 0.7/0.8, télécharger [l'installateur Windows 0.9.0 Test](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/download/test-v0.9.0/GT7-Race-Control-Ecurie-Setup-0.9.0-test.exe).
+2. Pour une installation manuelle, arrêter la capture et fermer la version en cours, puis lancer `GT7-Race-Control-Ecurie-Setup-0.9.0-test.exe`.
 3. Ouvrir **GT7 Race Control Écurie (Test)** depuis le menu Démarrer.
 
 L'installateur et l'archive portable sont disponibles dans la
-[publication Test 0.8.1](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/tag/test-v0.8.1),
+[publication Test 0.9.0](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/tag/test-v0.9.0),
 sans compte GitHub. Les artifacts de compilation restent disponibles dans Actions.
 
 Les versions 0.7 et 0.8 peuvent refuser un installateur valide avec le message
 « L'installateur a changé pendant sa vérification ». Le défaut étant dans leur
-lanceur déjà installé, un passage manuel unique à 0.8.1 est nécessaire. Il n'est
+lanceur déjà installé, un passage manuel unique à 0.8.1 ou une version plus récente est nécessaire. Il n'est
 pas nécessaire de désinstaller le canal Test ni d'effacer son profil.
 
 Python et les bibliothèques sont inclus dans l'installateur et dans la version
@@ -34,10 +34,13 @@ Le bouton **Démonstration** présente quatre voitures fictives et une carte fic
 sans connexion PS5, transmission réseau ni enregistrement de session.
 Un bandeau indique ce mode en permanence.
 
-La version 0.8.1 met à jour le canal Test existant en conservant son profil.
+La version 0.9 met à jour le canal Test existant en conservant son profil.
 La réception PS5 et l'essai complet sur un seul PC de la version 0.6 ont été
-confirmés par l'utilisateur. La version 0.8.1 conserve ces fonctions ainsi que
+confirmés par l'utilisateur. La version 0.9 conserve ces fonctions ainsi que
 le relais optionnel de 0.8, dont le parcours peut être essayé sur un seul PC.
+Elle embarque les lignes de piste et les repères de virage documentés retenus
+dans cette version : ces données arrivent avec la mise à jour, y compris pour
+les circuits dont les bordures ont déjà été téléchargées.
 
 ## Mises à jour depuis le logiciel
 
@@ -177,23 +180,29 @@ clés restent dans le profil local : ne pas les publier dans un ticket GitHub.
   suspend l'apprentissage de consommation. Le statut de connexion reste séparé.
 - Prise en compte des ravitaillements progressifs et horodatage CSV à la réception,
   même lorsque l'écriture disque est retardée.
-- Catalogue embarqué de 122 configurations, dont 27 avec données de bordures
-  dans ce catalogue ; bouton **Tous les tracés (27)** pour les installer ensemble.
+- Catalogue embarqué de 122 configurations, dont 32 avec données de bordures
+  téléchargeables ; bouton **Tracés détaillés (32)** pour les installer ensemble.
   Les caches valides sont conservés et chaque échec est signalé séparément.
-- Proposition du circuit à partir des coordonnées réelles, parmi les tracés
-  installés. Les variantes géométriquement identiques restent à choisir.
+- Lignes de piste ordonnées disponibles hors ligne pour 104 configurations.
+  Elles permettent d'afficher une carte dès la sélection, sans téléchargement
+  des bordures. Le statut de la carte précise le type de géométrie utilisé.
+- Proposition du circuit à partir des coordonnées réelles, parmi les cartes
+  embarquées et les bordures installées. Les variantes géométriquement identiques
+  restent à choisir manuellement.
 - Noms des pilotes, rotation de carte et miroir horizontal enregistrables.
   Le miroir est activé par défaut pour corriger le sens du tracé GT7 ; le même
   changement s'applique aux voitures, sans modifier leurs coordonnées réelles.
-- Numéros de virage affichés lorsque la bibliothèque fournit leurs coordonnées :
-  notamment 19 à Spa et 11 à Monza. Le bouton **Virages** sur la carte permet
-  de les masquer. Les annotations disponibles couvrent actuellement 10 tracés ;
-  aucun numéro n'est créé pour les tracés non annotés.
+- Numéros de virage issus des annotations documentées de la bibliothèque :
+  162 repères sur 12 tracés, notamment 19 à Spa et 11 à Monza. Le bouton
+  **Virages** sur la carte permet de les masquer. Les jeux dont la complétude
+  reste à confirmer sont signalés comme partiels. Aucun numéro n'est déduit
+  automatiquement et les variantes inversées n'héritent pas des numéros de l'aller.
 - Accès à l'ancienne interface V4, conservée pour comparaison.
 
 Les points de bordure ne sont pas reliés arbitrairement : les fichiers de la
-bibliothèque ne garantissent pas leur ordre. Les quatre pilotes doivent rouler
-sur le circuit sélectionné.
+bibliothèque ne garantissent pas leur ordre. Les lignes de piste embarquées,
+en revanche, possèdent un ordre de capture et sont dessinées comme des lignes.
+Les quatre pilotes doivent rouler sur le circuit sélectionné.
 
 Les points d'ancrage des numéros subissent le même miroir et la même rotation
 que le tracé et les voitures. Les pastilles sont décalées légèrement pour rester
@@ -201,8 +210,9 @@ lisibles et reliées à leur position par un trait.
 
 ![Spa : tracé en miroir et 19 virages annotés depuis les données du circuit](docs/images/spa-map.png)
 
-Pour obtenir une proposition, installer les tracés, cocher **Reconnaître le
-circuit**, puis parcourir plusieurs virages. La reconnaissance reste locale,
+Pour obtenir une proposition, cocher **Reconnaître le circuit**, puis parcourir
+plusieurs virages. Les bordures téléchargées complètent les lignes embarquées.
+La reconnaissance reste locale,
 attend plusieurs positions espacées et n'invente pas les circuits absents.
 Choisir la configuration proposée puis **Appliquer** ; en cas d'ambiguïté,
 sélectionner la variante voulue dans la liste. Il n'y a pas de changement
@@ -260,7 +270,16 @@ dans le packaging, faire valider la branche puis l'intégrer à `main`. La publi
 est réservée aux poussées sur `main` après les contrôles. Une version déjà publiée
 n'est jamais écrasée : son tag et ses fichiers doivent rester identiques.
 
-Source du catalogue :
+Les 122 entrées du catalogue ne signifient pas une couverture géométrique ou
+une numérotation complète du jeu. Les tracés sans données fiables restent
+indisponibles ; les circuits sans annotations restent sans numéros. Les jeux
+de virages sont associés à une configuration précise et leur provenance est
+conservée. Les différences entre le décompte du catalogue et les annotations
+ne sont pas corrigées en ajoutant des virages supposés.
+
+Sources et licences des données : [détail des ressources](docs/DATA_SOURCES.md).
+Le catalogue, les bordures et leurs annotations proviennent de
 [GT7 Datalogger Track Data](https://github.com/jbhoorasingh/gt7-datalogger-track-data),
-licence CC0 1.0 pour ces données. Le jeu et les marques appartiennent à leurs
+en CC0 1.0. Les lignes de référence issues de `zetetos/gt-telemetry` conservent
+leur notice MIT embarquée. Le jeu et les marques appartiennent à leurs
 propriétaires respectifs.

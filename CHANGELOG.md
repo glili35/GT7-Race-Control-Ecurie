@@ -1,5 +1,19 @@
 # Historique
 
+## 0.9.0 Test
+
+- Embarque les repères de virage documentés avec le logiciel : ils s'affichent
+  aussi sur les circuits téléchargés dans une version précédente, sans
+  réinstaller leurs bordures.
+- Étend les annotations disponibles à 162 repères sur 12 tracés. Les jeux
+  partiels restent identifiés ; aucun numéro automatique n'est ajouté.
+- Ajoute des lignes de piste ordonnées hors ligne et les utilise pour la carte
+  et les suggestions de circuit lorsque les bordures ne sont pas installées.
+- Met à jour le catalogue des bordures téléchargeables à 32 tracés.
+- Conserve le choix manuel lorsqu'une géométrie correspond à plusieurs
+  variantes ; les repères de virage restent propres à chaque configuration.
+- Conserve le profil du canal Test et la mise à jour depuis la version 0.8.1.
+
 ## 0.8.1 Test
 
 - Corrige le refus erroné « L'installateur a changé pendant sa vérification »

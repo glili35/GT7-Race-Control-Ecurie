@@ -20,6 +20,7 @@ from racecontrol.runtime import PilotSession
 from racecontrol.transport import EngineerHub, check_invitation
 from racecontrol.local_trial import LocalTrial
 from racecontrol.track_matcher import TrackMatcher
+from racecontrol.track_paths import TrackPaths
 from racecontrol.update_ui import UpdatePanel
 from racecontrol.relay_client import RelayEngineerSession, check_relay_invitation
 from racecontrol.relay_trial import RelayLocalTrial
@@ -180,6 +181,7 @@ class RaceControlApp:
         self.library = CircuitLibrary(cache_dir=self.data_dir / "circuits")
         if self.library.erreur_catalogue:
             raise RuntimeError(self.library.erreur_catalogue)
+        self.track_paths = TrackPaths(index_path=self.library.index_path)
         self.hub = None
         self.pilot = None
         self.local_trial = None
@@ -198,7 +200,9 @@ class RaceControlApp:
         self.events = queue.Queue(maxsize=200)
         self.actions = queue.SimpleQueue()
         self.points = []
+        self.centerline = ()
         self.corners = ()
+        self.corner_info = "Sélectionne un circuit pour afficher ses virages."
         self.transform = None
         self.layout_key = None
         self.legacy_windows = []
@@ -236,13 +240,16 @@ class RaceControlApp:
         self.pilot_status = tk.StringVar(value="Prêt à connecter ta PS5")
         self.link_status = tk.StringVar(value="Transmission ingénieur inactive")
         self.circuit_status = tk.StringVar(value="Sélectionne le circuit de la séance")
+        self.map_info = tk.StringVar(value=self.corner_info)
         self.recognition = tk.BooleanVar(value=False)
-        self.recognition_status = tk.StringVar(value="Reconnaissance limitée aux tracés installés")
+        self.recognition_status = tk.StringVar(value="Reconnaissance parmi les cartes disponibles")
         self.suggested = tk.StringVar(value="")
         self.connection_status = tk.StringVar(value="Invitation non vérifiée")
         self.trial_status = tk.StringVar(value="Un seul PC suffit pour vérifier la chaîne avec ta PS5.")
         self.summary = tk.StringVar(value="0 / 4 voitures connectées")
         self._build()
+        if self.track_paths.error:
+            self.log("Cartes embarquées indisponibles : " + self.track_paths.error)
         if self.circuit.get() in self.library.entrees:
             self.select_circuit()
         if demo:
@@ -340,9 +347,11 @@ class RaceControlApp:
                                          values=self.library.noms, width=39, state="readonly")
         self.circuit_combo.pack(side="left", padx=7)
         self.circuit_combo.bind("<<ComboboxSelected>>", lambda _: self.select_circuit())
-        ttk.Button(circuit_row, text="Télécharger le tracé", command=self.download_circuit).pack(side="left")
+        self.download_circuit_button = ttk.Button(circuit_row, text="Tracé détaillé",
+                                                 command=self.download_circuit, state="disabled")
+        self.download_circuit_button.pack(side="left")
         count = sum(self.library.est_disponible(n) for n in self.library.noms)
-        ttk.Button(circuit_row, text=f"Tous les tracés ({count})", command=self.download_all_circuits).pack(side="left", padx=7)
+        ttk.Button(circuit_row, text=f"Tracés détaillés ({count})", command=self.download_all_circuits).pack(side="left", padx=7)
         ttk.Label(circuit_row, textvariable=self.circuit_status, foreground=MUTED).pack(side="left", padx=10)
         recognition_row = ttk.Frame(parent)
         recognition_row.pack(fill="x", pady=(0, 8))
@@ -378,6 +387,8 @@ class RaceControlApp:
         self.canvas = tk.Canvas(map_frame, bg="#101d2b", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _: self.draw_track())
+        tk.Label(map_frame, textvariable=self.map_info, bg="#101d2b", fg=MUTED,
+                 font=(FONT, 9), wraplength=370, pady=5).pack(fill="x")
         tk.Label(map_frame, text="Les quatre pilotes doivent rouler sur le circuit sélectionné.",
                  bg="#101d2b", fg=MUTED, font=(FONT, 9), wraplength=370,
                  pady=10).pack(fill="x")
@@ -771,12 +782,17 @@ class RaceControlApp:
             self.banner.config(text="DÉMONSTRATION · QUATRE VOITURES SIMULÉES · AUCUNE PS5 CONNECTÉE")
             self.banner.pack(before=self.tabs, fill="x", padx=16, pady=(0, 8))
             self.points = demo_data.circuit_points()
+            self.centerline = ()
             self.corners = ()
+            self.corner_info = "Démonstration · aucune numérotation de circuit réel."
+            self.map_info.set(self.corner_info)
             self.circuit_status.set("Circuit fictif de démonstration")
         else:
             self.banner.pack_forget()
             self.select_circuit()
         self.circuit_combo.config(state="disabled" if self.demo else "readonly")
+        if self.demo:
+            self.download_circuit_button.config(state="disabled")
         self.layout_key = None
         self.draw_track()
 
@@ -785,19 +801,36 @@ class RaceControlApp:
             return
         name = self.circuit.get()
         self.points = []
+        self.centerline = ()
         self.corners = ()
+        self.corner_info = "Sélectionne un circuit pour afficher ses virages."
         if name in self.library.entrees:
             self.points = self.library.charger_points(name)
-            self.corners = self.library.charger_virages(name)
+            annotations = self.library.annotations_virages(name)
+            self.corners = annotations.points
+            if self.corners:
+                suffix = " · couverture à confirmer" if annotations.status == "partial" else ""
+                self.corner_info = f"{len(self.corners)} repères de virage documentés{suffix}."
+            elif annotations.status == "invalid":
+                self.corner_info = "Annotations de virage indisponibles · voir Diagnostic."
+                self.log("Annotations des virages : " + (self.library.erreur_cache(name) or name))
+            else:
+                self.corner_info = "Virages non documentés pour cette configuration."
+            if not self.points:
+                self.centerline = self.track_paths.load(name) or ()
             if self.points:
-                corner_info = f" · {len(self.corners)} virages repérés" if self.corners else " · virages non annotés"
-                self.circuit_status.set("Tracé installé" + corner_info)
+                self.circuit_status.set("Tracé détaillé installé")
+            elif self.centerline:
+                self.circuit_status.set("Carte embarquée · ligne de piste")
             elif self.library.est_disponible(name):
                 self.circuit_status.set("Tracé disponible à télécharger")
             else:
-                self.circuit_status.set("Bordures non disponibles dans la bibliothèque")
+                self.circuit_status.set("Carte non disponible pour cette configuration")
         else:
             self.circuit_status.set("Sélectionne le circuit de la séance")
+        detailed = name in self.library.entrees and self.library.est_disponible(name)
+        self.download_circuit_button.config(state="normal" if detailed else "disabled")
+        self.map_info.set(self.corner_info)
         self.draw_track()
 
     def download_circuit(self):
@@ -858,7 +891,7 @@ class RaceControlApp:
                 self._match_car = None
                 self.recognition_status.set("Roule quelques virages pour obtenir une proposition")
 
-        self.work(lambda: TrackMatcher(self.library), ready)
+        self.work(lambda: TrackMatcher(self.library, paths=self.track_paths), ready)
 
     def apply_suggestion(self):
         suggestion = self.suggested.get()
@@ -914,22 +947,29 @@ class RaceControlApp:
         self.canvas.delete("cars")
         self.transform = None
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
-        if not self.points or w < 20 or h < 20:
+        coordinates = ([(x, z) for x, z, _ in self.points] if self.points else self.centerline)
+        if not coordinates or w < 20 or h < 20:
             self.canvas.create_text(max(140, w / 2), max(80, h / 2),
-                                     text="Le tracé apparaîtra ici\naprès sélection et téléchargement.",
+                                     text="Sélectionne le circuit de la séance.\nLes tracés détaillés se téléchargent si disponibles.",
                                      fill=MUTED, justify="center", font=(FONT, 11), tags="track")
             return
-        rotated = [self._rotate(x, z) for x, z, _ in self.points]
+        rotated = [self._rotate(x, z) for x, z in coordinates]
         xs, zs = zip(*rotated)
         xmin, xmax, zmin, zmax = min(xs), max(xs), min(zs), max(zs)
         scale = min((w - 54) / max(1, xmax - xmin), (h - 54) / max(1, zmax - zmin))
         cx, cz = (xmin + xmax) / 2, (zmin + zmax) / 2
         self.transform = lambda x, z: (w / 2 + (x - cx) * scale, h / 2 - (z - cz) * scale)
-        stride = max(1, len(rotated) // 6000)
-        for i in range(0, len(rotated), stride):
-            px, pz = self.transform(*rotated[i])
-            self.canvas.create_oval(px - 1, pz - 1, px + 1, pz + 1,
-                                    fill="#66869d", outline="", tags="track")
+        if self.points:
+            stride = max(1, len(rotated) // 6000)
+            for i in range(0, len(rotated), stride):
+                px, pz = self.transform(*rotated[i])
+                self.canvas.create_oval(px - 1, pz - 1, px + 1, pz + 1,
+                                        fill="#66869d", outline="", tags="track")
+        elif len(rotated) > 1:
+            pixels = [value for point in rotated for value in self.transform(*point)]
+            # Les lignes embarquées sont ordonnées ; leurs extrémités ne sont
+            # pas reliées si la source ne fournit pas un tour fermé.
+            self.canvas.create_line(*pixels, fill="#66869d", width=3, tags="track")
         self.draw_corners(w, h)
 
     def draw_corners(self, width, height):
@@ -961,6 +1001,10 @@ class RaceControlApp:
             self.canvas.create_text(lx, ly, text=str(corner.n), fill="#152233",
                                     font=(FONT, 9, "bold"),
                                     tags=("corners", f"turn-label-{corner.n}"))
+            description = f"Virage {corner.n}" + (f" · {corner.name}" if corner.name else "")
+            for tag in (f"turn-{corner.n}", f"turn-label-{corner.n}"):
+                self.canvas.tag_bind(tag, "<Enter>", lambda _, text=description: self.map_info.set(text))
+                self.canvas.tag_bind(tag, "<Leave>", lambda _: self.map_info.set(self.corner_info))
 
     def draw_cars(self, cars):
         self.canvas.delete("cars")

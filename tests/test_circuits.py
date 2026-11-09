@@ -167,6 +167,154 @@ class CircuitTests(unittest.TestCase):
         data["corners"] = corners
         return self.put_cache(json.dumps(data).encode())
 
+    def overlay_library(self, configurations, *, entries=None, revision="revision-test", path=None):
+        entries = entries or [
+            {"official_id": "forward", "official_name": "Test", "reverse": False,
+             "bundle": {"file": "tracks/test.json"}},
+        ]
+        self.index.write_text(json.dumps({"configurations": entries}), encoding="utf-8")
+        overlay = path or self.root / "corners.json"
+        overlay.write_text(json.dumps({"schema_version": 1, "revision": revision,
+                                       "configurations": configurations}), encoding="utf-8")
+        return circuits.CircuitLibrary(self.root / "cache", self.index, overlay_path=path)
+
+    @staticmethod
+    def annotation(corners=None, *, status="documented", **extra):
+        corners = corners if corners is not None else [
+            {"n": 1, "name": "Premier", "apex": {"x": 12.0, "z": -4.0}},
+        ]
+        return {"status": status, "source": "https://example.org/track-source.json",
+                "corners": corners, **extra}
+
+    def test_embedded_annotations_update_old_cache_without_download_or_geometry_write(self):
+        cached = self.cache_with_corners([
+            {"n": 99, "name": "Ancien", "apex": {"x": -100.0, "z": 200.0}},
+        ])
+        before = cached.read_bytes()
+        self.library = self.overlay_library({"forward": self.annotation()})
+        with patch.object(circuits, "urlopen") as download:
+            result = self.library.annotations_virages("Test")
+            self.library.installer("Test")
+        self.assertEqual(result.points, (circuits.CornerPoint(1, "Premier", 12.0, -4.0),))
+        self.assertEqual(result.status, "documented")
+        self.assertEqual(result.revision, "revision-test")
+        self.assertEqual(result.source, "https://example.org/track-source.json")
+        self.assertEqual(self.library.charger_virages("Test"), result.points)
+        self.assertEqual(cached.read_bytes(), before)
+        download.assert_not_called()
+
+    def test_constructor_and_annotation_read_are_offline_without_a_geometry_cache(self):
+        self.library = self.overlay_library({"forward": self.annotation()})
+        self.assertFalse(self.library.cache_dir.exists())
+        with patch.object(circuits, "urlopen") as download:
+            reloaded = circuits.CircuitLibrary(self.library.cache_dir, self.index)
+            result = reloaded.annotations_virages("Test")
+        self.assertEqual(len(result.points), 1)
+        self.assertEqual(result.status, "documented")
+        self.assertFalse(self.library.cache_dir.exists())
+        download.assert_not_called()
+
+    def test_partial_annotations_keep_provided_numbers_and_note_without_inventing_missing_turns(self):
+        provided = [
+            {"n": 3, "apex": {"x": 50.0, "z": -30.0}},
+            {"n": 1, "apex": {"x": -10.0, "z": 20.0}},
+        ]
+        self.library = self.overlay_library({"forward": self.annotation(
+            provided, status="partial", expected_turns=4, note="Numérotation à confirmer")})
+        result = self.library.annotations_virages("Test")
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(tuple(point.n for point in result.points), (1, 3))
+        self.assertEqual(result.note, "Numérotation à confirmer")
+        self.assertEqual(tuple((point.x, point.z) for point in result.points), ((-10., 20.), (50., -30.)))
+
+    def test_reverse_and_forward_overlays_are_selected_by_exact_configuration_id(self):
+        entries = [
+            {"official_id": "forward", "official_name": "Aller", "reverse": False,
+             "bundle": {"file": "tracks/shared.json"}},
+            {"official_id": "reverse", "official_name": "Retour", "reverse": True,
+             "bundle": {"file": "tracks/shared.json"}},
+        ]
+        self.library = self.overlay_library({
+            "forward": self.annotation(),
+            "reverse": self.annotation([{"n": 1, "apex": {"x": 100., "z": -200.}}]),
+        }, entries=entries)
+        forward, reverse = (self.library.annotations_virages(name) for name in ("Aller", "Retour"))
+        self.assertEqual((forward.points[0].x, forward.points[0].z), (12., -4.))
+        self.assertEqual((reverse.points[0].x, reverse.points[0].z), (100., -200.))
+        self.assertEqual(reverse.status, "documented")
+
+    def test_explicit_missing_overlay_does_not_reuse_stale_cached_annotations(self):
+        cached = self.cache_with_corners([
+            {"n": 1, "apex": {"x": 12., "z": -4.}},
+        ])
+        before = cached.read_bytes()
+        self.library = self.overlay_library({"forward": self.annotation([], status="missing")})
+        result = self.library.annotations_virages("Test")
+        self.assertEqual((result.status, result.points), ("missing", ()))
+        self.assertTrue(self.library.charger_points("Test"))
+        self.assertEqual(cached.read_bytes(), before)
+        self.assertIsNone(self.library.erreur_cache("Test"))
+
+    def test_invalid_overlay_entry_keeps_borders_and_other_configurations_usable(self):
+        self.put_cache()
+        invalid = self.annotation([{"n": 1, "apex": {"x": True, "z": 0}}])
+        self.library = self.overlay_library({"forward": invalid, "other": self.annotation()}, entries=[
+            {"official_id": "forward", "official_name": "Test", "bundle": {"file": "tracks/test.json"}},
+            {"official_id": "other", "official_name": "Autre", "bundle": None},
+        ])
+        self.assertEqual(self.library.annotations_virages("Test").status, "invalid")
+        self.assertEqual(self.library.charger_virages("Test"), ())
+        self.assertTrue(self.library.charger_points("Test"))
+        self.assertIn("Annotations des virages", self.library.erreur_cache("Test"))
+        self.assertEqual(self.library.annotations_virages("Autre").status, "documented")
+        self.assertIsNone(self.library.erreur_catalogue)
+
+    def test_malformed_overlay_is_visible_without_disabling_the_catalogue_or_borders(self):
+        self.put_cache()
+        (self.root / "corners.json").write_text("{invalid json", encoding="utf-8")
+        library = circuits.CircuitLibrary(self.root / "cache", self.index)
+        self.assertIsNone(library.erreur_catalogue)
+        self.assertEqual(library.annotations_virages("Test").status, "invalid")
+        self.assertTrue(library.charger_points("Test"))
+        self.assertIn("Annotations des virages", library.erreur_cache("Test"))
+
+    def test_absent_overlay_keeps_historical_annotations_with_unconfirmed_coverage(self):
+        self.cache_with_corners([{"n": 2, "apex": {"x": 12., "z": -4.}}])
+        result = self.library.annotations_virages("Test")
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(result.source, "Cache local historique")
+        self.assertEqual(tuple(point.n for point in result.points), (2,))
+
+    def test_historical_reverse_annotations_require_their_own_identity_and_direction(self):
+        entries = [
+            {"official_id": "forward", "official_name": "Aller", "reverse": False,
+             "bundle": {"file": "tracks/shared.json"}},
+            {"official_id": "reverse", "official_name": "Retour", "reverse": True,
+             "bundle": {"file": "tracks/shared.json"}},
+        ]
+        self.index.write_text(json.dumps({"configurations": entries}), encoding="utf-8")
+        self.library = circuits.CircuitLibrary(self.root / "cache", self.index)
+        cached = self.library.chemin("Aller")
+        cached.parent.mkdir(parents=True)
+        data = json.loads(self.payload)
+        data["corners"] = [{"n": 1, "apex": {"x": 12., "z": -4.}}]
+        cached.write_text(json.dumps(data), encoding="utf-8")
+        self.assertEqual(self.library.annotations_virages("Retour").status, "missing")
+        data["meta"] = {"official": {"official_id": "forward", "reverse": False}}
+        cached.write_text(json.dumps(data), encoding="utf-8")
+        self.assertEqual(self.library.annotations_virages("Aller").status, "partial")
+        self.assertEqual(self.library.annotations_virages("Retour").status, "invalid")
+        data["meta"] = {"official": {"official_id": "reverse", "reverse": True}}
+        cached.write_text(json.dumps(data), encoding="utf-8")
+        self.assertEqual(self.library.annotations_virages("Retour").status, "partial")
+        self.assertEqual(self.library.annotations_virages("Aller").status, "invalid")
+
+    def test_overlay_path_can_be_injected_independently_from_the_catalogue(self):
+        path = self.root / "custom-annotations.json"
+        self.library = self.overlay_library({"forward": self.annotation()}, path=path)
+        self.assertEqual(self.library.overlay_path, path)
+        self.assertEqual(self.library.annotations_virages("Test").status, "documented")
+
     def test_corner_anchors_are_read_in_number_order_without_changing_coordinates(self):
         self.cache_with_corners([
             {"n": 3, "name": "Raidillon", "apex": {"x": 83.1, "z": -462.1}},

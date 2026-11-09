@@ -269,7 +269,7 @@ class AppV06IntegrationTests(unittest.TestCase):
             installed.set()
             return self.BulkResult((selected,), (), {failed: "Source indisponible"}, False)
 
-        def new_matcher(library):
+        def new_matcher(library, **kwargs):
             return SimpleNamespace(
                 loaded_points=library.charger_points(selected),
                 reset=lambda **kwargs: None,

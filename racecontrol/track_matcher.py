@@ -1,7 +1,7 @@
 """Suggestions de circuits par correspondance géométrique, entièrement hors ligne.
 
-Seuls les bundles déjà installés sont examinés. Les points de bordure ne sont
-pas reliés ni interprétés comme une trajectoire. Une correspondance repose sur
+Les bordures installées et les trajectoires embarquées sont examinées. Les
+points de bordure ne sont pas reliés ni interprétés comme une trajectoire. Une correspondance repose sur
 plusieurs positions et une étendue minimale, jamais sur un point isolé. Le
 résultat reste une proposition à confirmer : ce module ne change aucun circuit.
 """
@@ -17,8 +17,9 @@ from threading import RLock
 from time import monotonic
 
 from .circuits import CircuitLibrary
+from .track_paths import TrackPaths
 
-MAX_GEOMETRIES = 64
+MAX_GEOMETRIES = 128
 MAX_POINTS_PER_GEOMETRY = 24_000
 MAX_TOTAL_POINTS = 400_000
 MAX_POINTS_PER_CELL = 256
@@ -111,7 +112,7 @@ def _span(points: list[_Observation]) -> float:
 
 
 class TrackMatcher:
-    """Reconnaissance prudente d'une seule voiture, parmi les caches installés.
+    """Reconnaissance prudente parmi les géométries disponibles hors ligne.
 
     ``observe`` doit recevoir les positions d'une seule voiture. Il conserve au
     plus 24 observations et ignore les répétitions trop proches. ``reload`` est
@@ -122,7 +123,7 @@ class TrackMatcher:
     def __init__(self, library: CircuitLibrary, *, min_samples: int = 6,
                  window_size: int = 24, min_span_m: float = 120.0,
                  min_step_m: float = 8.0, sample_interval_s: float = 0.25,
-                 radius_m: float = 40.0):
+                 radius_m: float = 40.0, paths: TrackPaths | None = None):
         if type(min_samples) is not int or not 3 <= min_samples <= 24:
             raise ValueError("Il faut entre 3 et 24 observations minimales")
         if type(window_size) is not int or not min_samples <= window_size <= 48:
@@ -133,6 +134,7 @@ class TrackMatcher:
         if _finite(sample_interval_s) is None or not 0 <= sample_interval_s <= 60:
             raise ValueError("Cadence de reconnaissance incorrecte")
         self.library = library
+        self.paths = paths if paths is not None else TrackPaths(index_path=getattr(library, "index_path", None))
         self.min_samples, self.window_size = min_samples, window_size
         self.min_span_m, self.min_step_m = float(min_span_m), float(min_step_m)
         self.sample_interval_s, self.radius_m = float(sample_interval_s), float(radius_m)
@@ -151,7 +153,7 @@ class TrackMatcher:
 
     @property
     def available_configurations(self) -> int:
-        return sum(len(geometry.names) for geometry in self._geometries)
+        return len({name for geometry in self._geometries for name in geometry.names})
 
     def reload(self) -> None:
         """Recharge seulement les géométries locales ; ne télécharge rien."""
@@ -167,36 +169,53 @@ class TrackMatcher:
             geometries: list[_Geometry] = []
             by_digest: dict[bytes, _Geometry] = {}
             total_points = 0
-            for names in by_file.values():
-                try:
-                    points = self.library.charger_points(names[0])
-                except (OSError, ValueError, TypeError):
-                    skipped.extend(names)
-                    continue
-                if not points:
-                    continue
-                coordinates = sorted({(x, z) for x, z, _ in points})
+            represented = set()
+
+            def add(names, coordinates):
+                nonlocal total_points
+                expanded = set(names)
+                for name in names:
+                    expanded.update(alias for alias in self.paths.equivalent_names(name)
+                                    if alias in self.library.entrees)
+                coordinates = sorted(set(coordinates))
                 digest = hashlib.sha256()
                 for x, z in coordinates:
                     digest.update(struct.pack("<dd", 0.0 if x == 0 else x, 0.0 if z == 0 else z))
                 signature = digest.digest()
                 identical = by_digest.get(signature)
                 if identical is not None:
-                    identical.names = tuple(sorted((*identical.names, *names)))
-                    continue
+                    identical.names = tuple(sorted(set(identical.names) | expanded))
+                    represented.update(expanded)
+                    return
                 if len(geometries) >= MAX_GEOMETRIES:
-                    skipped.extend(names)
-                    continue
+                    skipped.extend(expanded)
+                    return
                 grid = _Grid(coordinates, self.radius_m)
                 if total_points + grid.count > MAX_TOTAL_POINTS:
-                    skipped.extend(names)
-                    continue
-                geometry = _Geometry(tuple(sorted(names)), grid)
+                    skipped.extend(expanded)
+                    return
+                geometry = _Geometry(tuple(sorted(expanded)), grid)
                 geometries.append(geometry)
                 by_digest[signature] = geometry
                 total_points += grid.count
+                represented.update(expanded)
+
+            for names in by_file.values():
+                try:
+                    points = self.library.charger_points(names[0])
+                except (OSError, ValueError, TypeError):
+                    skipped.extend(names)
+                    continue
+                if points:
+                    add(names, [(x, z) for x, z, _ in points])
+            # Les lignes ont déjà leur ordre pour le dessin, mais cet index ne
+            # déduit aucun sens de roulage. Les twins explicitement liés restent
+            # toujours plusieurs choix, même avec des bordures plus détaillées.
+            for name in self.library.noms:
+                if name not in represented and (points := self.paths.load(name)):
+                    add([name], points)
             self._geometries = geometries
-            self.skipped = tuple(skipped)
+            self.skipped = tuple(sorted(set(skipped) - represented))
             self.reset(keep_stable=True)
 
     def reset(self, *, keep_stable: bool = True) -> None:
@@ -208,7 +227,7 @@ class TrackMatcher:
                 self._stable_candidate = None
             status = "waiting" if self._geometries else "unavailable"
             message = ("Roule sur une portion de circuit pour obtenir une suggestion."
-                       if self._geometries else "Aucun tracé installé pour la reconnaissance locale.")
+                       if self._geometries else "Aucun tracé local disponible pour la reconnaissance.")
             self._last_result = MatchResult(status, stable_candidate=self._stable_candidate, message=message)
 
     def observe(self, x: float, z: float, *, now: float | None = None) -> MatchResult:
@@ -270,7 +289,7 @@ class TrackMatcher:
             ranked.append((typical, mean, confidence, geometry))
         if not ranked:
             return MatchResult("no_match", **base,
-                               message="Pas encore de correspondance fiable sur une portion assez étendue des tracés installés.")
+                               message="Pas encore de correspondance fiable sur une portion assez étendue des tracés locaux.")
         ranked.sort(key=lambda item: (item[0], item[1]))
         best_distance, mean, confidence, best = ranked[0]
         competitors = [item[3] for item in ranked if item[0] - best_distance < 12.0]

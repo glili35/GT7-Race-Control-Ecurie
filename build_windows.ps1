@@ -20,6 +20,14 @@ function Test-ApplicationStartup {
         throw "Le runtime Python embarqué est absent : $runtimeDirectory"
     }
     Write-Host ("Runtime Python embarqué vérifié : " + (($pythonRuntime | ForEach-Object { $_.Name }) -join ", "))
+    $circuitDirectory = Join-Path $runtimeDirectory "circuits_gt7"
+    foreach ($resource in @("index.json", "corners.json", "track_paths.json",
+                            "LICENSE-CC0.txt", "LICENSE-MIT-reference-laps.txt")) {
+        if (!(Test-Path -LiteralPath (Join-Path $circuitDirectory $resource) -PathType Leaf)) {
+            throw "Ressource des circuits absente de l'application : $resource"
+        }
+    }
+    Write-Host "Catalogue, virages, lignes de piste et notices de licence embarqués vérifiés."
     if (!$SmokeDirectory) {
         $SmokeDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("gt7-smoke-" + [guid]::NewGuid().ToString("N"))
     }
@@ -56,8 +64,8 @@ function Test-ApplicationStartup {
             throw "Le test n'a pas produit son rapport : $reportPath"
         }
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($report.ok -ne $true -or $report.version -ne "0.8.1") {
-            throw "Le rapport ne confirme pas le démarrage de la version 0.8.1."
+        if ($report.ok -ne $true -or $report.version -ne "0.9.0") {
+            throw "Le rapport ne confirme pas le démarrage de la version 0.9.0."
         }
         Write-Host "Démarrage de l'interface vérifié : $ApplicationPath"
         Write-Host "Démarrage autonome vérifié avec PATH Windows système uniquement, sans Python dans PATH."
@@ -87,7 +95,7 @@ python -m PyInstaller --noconfirm --clean --windowed --onedir `
     --hidden-import race_control_live_V4_INTERFACE `
     --hidden-import strategie_carburant_V2 `
     --collect-submodules racecontrol `
-    --add-data "circuits_gt7/index.json;circuits_gt7" `
+    --add-data "circuits_gt7;circuits_gt7" `
     racecontrol_app.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
