@@ -1,42 +1,152 @@
-name: Build Windows Installer (test)
+name: Vérifier et construire GT7 Race Control
+
 on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+      - 'test/**'
+  pull_request:
   workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: gt7-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  windows-installer:
-    runs-on: windows-latest
-    timeout-minutes: 35
+  tests:
+    name: Tests Python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
-      - name: Recuperer la branche de test
-        uses: actions/checkout@v4
-        with:
-          ref: test/installateur-windows
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Verifier la syntaxe Python
-        run: python -m compileall -q race_control_live_V4_INTERFACE.py racecontrol tests
-      - name: Installer les dependances
-        run: python -m pip install -r requirements-build.txt
-      - name: Executer les tests
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Installer les dépendances
+        run: python -m pip install -r requirements.txt
+      - name: Vérifier la syntaxe et les imports
+        run: python -m compileall -q racecontrol_app.py race_control_live_V4_INTERFACE.py strategie_carburant_V2.py racecontrol tests
+      - name: Exécuter les tests et l'essai local PS5 synthétique
         run: python -m unittest discover -s tests -v
-      - name: Construire l'application
+
+  windows-installer:
+    name: Application et installateur Windows 0.7.0 (test)
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+      - name: Installer les dépendances de construction
+        run: python -m pip install -r requirements-build.txt
+      - name: Construire l'application et vérifier les vues pilote et ingénieur
         shell: pwsh
-        run: ./build_windows.ps1
-      - name: Installer Inno Setup
-        shell: pwsh
-        run: choco install innosetup --yes --no-progress
-      - name: Creer l'installateur
+        run: ./build_windows.ps1 -SkipDependencies -SmokeDirectory "${{ runner.temp }}\gt7-smoke-portable"
+      - name: Trouver ou installer Inno Setup
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (!(Test-Path $iscc)) { throw "Inno Setup introuvable: $iscc" }
-          & $iscc installer.iss
+          if (!(Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if (!(Test-Path $iscc)) { throw "Inno Setup introuvable : $iscc" }
+          "GT7_ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Créer l'installateur
+        shell: pwsh
+        run: |
+          & $env:GT7_ISCC installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Installer et lancer la version construite
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path "Output\GT7-Race-Control-Ecurie-Setup-0.7.0-test.exe").Path
+          $destination = "${{ runner.temp }}\GT7 Installed Test"
+          $arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$destination`""
+          $process = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru
+          if (!$process.WaitForExit(120000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "L'installation silencieuse ne s'est pas terminée."
+          }
+          $process.Refresh()
+          if ($process.ExitCode -ne 0) { throw "L'installateur a échoué : $($process.ExitCode)" }
+          ./build_windows.ps1 -SmokeOnly -Executable "$destination\GT7-Race-Control-Ecurie.exe" -SmokeDirectory "${{ runner.temp }}\gt7-smoke-installed"
+      - name: Préparer l'archive portable et les empreintes
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\GT7-Race-Control-Ecurie -DestinationPath Output\GT7-Race-Control-Ecurie-Portable-0.7.0-test.zip
+          Get-ChildItem Output -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content Output\SHA256SUMS.txt -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: GT7-Race-Control-Ecurie-Windows-Setup-test
-          path: Output/*.exe
+          name: GT7-Race-Control-Ecurie-Windows-0.7.0-test
+          path: |
+            Output/GT7-Race-Control-Ecurie-Setup-0.7.0-test.exe
+            Output/GT7-Race-Control-Ecurie-Portable-0.7.0-test.zip
+            Output/SHA256SUMS.txt
           if-no-files-found: error
+          retention-days: 30
+      - name: Conserver les rapports de démarrage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GT7-demarrage-Windows-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/gt7-smoke-portable/startup.json
+            ${{ runner.temp }}/gt7-smoke-installed/startup.json
+          if-no-files-found: ignore
           retention-days: 14
+
+  publish-test:
+    name: Publier la préversion Test 0.7.0 vérifiée
+    needs: [tests, windows-installer]
+    if: >-
+      github.repository == 'glili35/GT7-Race-Control-Ecurie' &&
+      github.ref == 'refs/heads/codex/race-control-0.5' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: GT7-Race-Control-Ecurie-Windows-0.7.0-test
+          path: release-assets
+      - name: Installer les dépendances du client de mises à jour
+        run: python -m pip install -r requirements.txt
+      - name: Publier les fichiers déjà testés sur le commit exact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/publish_test.py --version 0.7.0
+          --artifact-dir release-assets --target-sha "${{ github.sha }}"
+      - name: Vérifier la mise à jour publique sans authentification
+        run: >-
+          python scripts/publish_test.py --verify-public --version 0.7.0
+          --previous-version 0.6.0 --artifact-dir release-assets
+          --target-sha "${{ github.sha }}"
