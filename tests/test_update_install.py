@@ -6,14 +6,23 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from racecontrol.update_install import InstallerError, launch_installer
+from racecontrol.update_install import InstallerError, InstallerFileError, launch_installer
 from racecontrol.updates import UpdateClient, UpdateInfo
 
 
 class InstallUpdateTests(unittest.TestCase):
+    @staticmethod
+    def with_ctime(metadata, ctime_ns):
+        return SimpleNamespace(**{name: getattr(metadata, name) for name in (
+            'st_dev', 'st_ino', 'st_mode', 'st_size', 'st_mtime_ns', 'st_nlink')},
+            st_ctime_ns=ctime_ns,
+            st_file_attributes=getattr(metadata, 'st_file_attributes', 0))
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -54,6 +63,103 @@ class InstallUpdateTests(unittest.TestCase):
         self.assertTrue(kwargs['close_fds'])
         self.assertFalse(any('SILENT' in arg.upper() for arg in args[0]))
         self.assertEqual(self.installer.read_bytes(), self.content)
+
+    def test_path_creation_time_may_differ_from_descriptor_change_time(self):
+        # CPython Windows 3.12 reports birthtime through lstat and ChangeTime
+        # through fstat. A valid downloaded file can have different values.
+        original_lstat = Path.lstat
+        creation_time = self.installer.lstat().st_ctime_ns - 1_000_000_000
+
+        def lstat(path, *args, **kwargs):
+            metadata = original_lstat(path, *args, **kwargs)
+            return self.with_ctime(metadata, creation_time) if path == self.installer else metadata
+
+        with patch.object(Path, 'lstat', lstat):
+            self.assertIs(launch_installer(self.client, self.info, self.installer), self.process)
+        self.assertEqual(self.client.verify_download.call_count, 1)
+        self.popen.assert_called_once()
+
+    def test_written_then_renamed_installer_uses_real_file_metadata(self):
+        # Exercise the actual write/flush/rename sequence of a download, rather
+        # than relying on coincident creation and change times from write_bytes.
+        self.installer.unlink()
+        partial = self.installer.with_suffix('.part')
+        partial.touch()
+        time.sleep(.03)
+        with partial.open('wb') as stream:
+            stream.write(self.content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        partial.replace(self.installer)
+        self.assertIs(launch_installer(self.client, self.info, self.installer), self.process)
+        self.assertEqual(self.client.verify_download.call_count, 1)
+        self.popen.assert_called_once()
+
+    def test_descriptor_change_time_still_detects_change_with_same_size_and_mtime(self):
+        original_fstat = os.fstat
+        real_verify = self.client.verify_download
+        verified = False
+
+        def fstat(descriptor):
+            metadata = original_fstat(descriptor)
+            return self.with_ctime(metadata, metadata.st_ctime_ns + 1) if verified else metadata
+
+        def verify(info, path):
+            nonlocal verified
+            result = real_verify(info, path)
+            verified = True
+            return result
+
+        with patch('racecontrol.update_install.os.fstat', side_effect=fstat), \
+                patch.object(self.client, 'verify_download', side_effect=verify):
+            with self.assertRaisesRegex(InstallerFileError, 'pendant sa vérification'):
+                launch_installer(self.client, self.info, self.installer)
+        self.popen.assert_not_called()
+
+    def test_path_change_time_still_detects_change_with_same_size_and_mtime(self):
+        original_lstat = Path.lstat
+        real_verify = self.client.verify_download
+        verified = False
+
+        def lstat(path, *args, **kwargs):
+            metadata = original_lstat(path, *args, **kwargs)
+            if verified and path == self.installer:
+                return self.with_ctime(metadata, metadata.st_ctime_ns + 1)
+            return metadata
+
+        def verify(info, path):
+            nonlocal verified
+            result = real_verify(info, path)
+            verified = True
+            return result
+
+        with patch.object(Path, 'lstat', lstat), \
+                patch.object(self.client, 'verify_download', side_effect=verify):
+            with self.assertRaisesRegex(InstallerFileError, 'pendant sa vérification'):
+                launch_installer(self.client, self.info, self.installer)
+        self.popen.assert_not_called()
+
+    def test_file_unavailable_after_hash_requires_a_new_download(self):
+        original_lstat = Path.lstat
+        real_verify = self.client.verify_download
+        verified = False
+
+        def lstat(path, *args, **kwargs):
+            if verified and path == self.installer:
+                raise FileNotFoundError('Fichier devenu indisponible')
+            return original_lstat(path, *args, **kwargs)
+
+        def verify(info, path):
+            nonlocal verified
+            result = real_verify(info, path)
+            verified = True
+            return result
+
+        with patch.object(Path, 'lstat', lstat), \
+                patch.object(self.client, 'verify_download', side_effect=verify):
+            with self.assertRaisesRegex(InstallerFileError, 'plus disponible'):
+                launch_installer(self.client, self.info, self.installer)
+        self.popen.assert_not_called()
 
     def test_source_and_other_platforms_are_rejected_before_file_access(self):
         for platform, frozen in [('linux', True), ('darwin', True), ('win32', False)]:

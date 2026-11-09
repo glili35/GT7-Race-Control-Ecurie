@@ -14,6 +14,12 @@ function Test-ApplicationStartup {
     if (!(Test-Path -LiteralPath $ApplicationPath)) {
         throw "Application introuvable : $ApplicationPath"
     }
+    $runtimeDirectory = Join-Path (Split-Path -Parent $ApplicationPath) "_internal"
+    $pythonRuntime = @(Get-ChildItem -LiteralPath $runtimeDirectory -Filter "python3*.dll" -File -ErrorAction Stop)
+    if ($pythonRuntime.Count -eq 0) {
+        throw "Le runtime Python embarqué est absent : $runtimeDirectory"
+    }
+    Write-Host ("Runtime Python embarqué vérifié : " + (($pythonRuntime | ForEach-Object { $_.Name }) -join ", "))
     if (!$SmokeDirectory) {
         $SmokeDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("gt7-smoke-" + [guid]::NewGuid().ToString("N"))
     }
@@ -24,8 +30,18 @@ function Test-ApplicationStartup {
     # Le smoke exerce les vues pilote et ingénieur avec des données synthétiques.
     # Il ne doit ni lire la configuration d'un pilote ni contacter sa vraie PS5.
     $previousDataDirectory = $env:GT7RC_DATA_DIR
+    $previousStartupPath = $env:PATH
     $env:GT7RC_DATA_DIR = Join-Path $SmokeDirectory "profile"
     try {
+        # Exclure les interpréteurs installés pour le développement. Ce même
+        # contrôle exerce l'EXE portable et celui posé par l'installateur.
+        $env:PATH = @((Join-Path $env:SystemRoot "System32"), $env:SystemRoot,
+                      (Join-Path $env:SystemRoot "System32\Wbem")) -join ";"
+        foreach ($pythonCommand in @("python.exe", "python3.exe")) {
+            if (@(Get-Command -Name $pythonCommand -CommandType Application -ErrorAction SilentlyContinue).Count -gt 0) {
+                throw "Le test autonome ne doit pas trouver $pythonCommand dans le PATH système."
+            }
+        }
         $arguments = "--smoke-test --smoke-report `"$reportPath`""
         $process = Start-Process -FilePath $ApplicationPath -ArgumentList $arguments -PassThru
         if (!$process.WaitForExit(45000)) {
@@ -40,13 +56,15 @@ function Test-ApplicationStartup {
             throw "Le test n'a pas produit son rapport : $reportPath"
         }
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($report.ok -ne $true -or $report.version -ne "0.8.0") {
-            throw "Le rapport ne confirme pas le démarrage de la version 0.8.0."
+        if ($report.ok -ne $true -or $report.version -ne "0.8.1") {
+            throw "Le rapport ne confirme pas le démarrage de la version 0.8.1."
         }
         Write-Host "Démarrage de l'interface vérifié : $ApplicationPath"
+        Write-Host "Démarrage autonome vérifié avec PATH Windows système uniquement, sans Python dans PATH."
         Write-Host "Rapport : $reportPath"
     }
     finally {
+        $env:PATH = $previousStartupPath
         $env:GT7RC_DATA_DIR = $previousDataDirectory
     }
 }

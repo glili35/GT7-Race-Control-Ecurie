@@ -11,7 +11,7 @@ from scripts import publish_test as publication
 
 
 TARGET_SHA = "a" * 40
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 
 
 class FakeGitHub:

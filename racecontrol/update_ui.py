@@ -11,7 +11,7 @@ import tkinter as tk
 from typing import Callable
 
 from . import __version__
-from .update_install import launch_installer
+from .update_install import InstallerFileError, launch_installer
 from .updates import UpdateCancelled, UpdateClient
 
 
@@ -71,6 +71,8 @@ class UpdatePanel(ttk.Frame):
                 self._events.put((kind, result))
             except UpdateCancelled:
                 self._events.put(("cancelled", None))
+            except InstallerFileError as exc:
+                self._events.put(("invalid_installer", str(exc)))
             except Exception as exc:
                 self._events.put(("error", str(exc)))
 
@@ -198,6 +200,13 @@ class UpdatePanel(ttk.Frame):
                 self.status.set("Téléchargement annulé. La version actuelle reste disponible.")
                 if self.info is not None:
                     self.install_button.config(state="normal")
+            elif kind == "invalid_installer":
+                self.downloaded = None
+                self.progress.set(0)
+                self.status.set(result)
+                self.log("Mise à jour : " + result)
+                if self.info is not None:
+                    self.install_button.config(text="Télécharger à nouveau", state="normal")
             elif kind == "error":
                 self.status.set(result)
                 self.log("Mise à jour : " + result)
