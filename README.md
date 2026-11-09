@@ -4,6 +4,8 @@ Un poste ingénieur pour réunir les télémétries de **quatre pilotes GT7**, c
 avec sa PlayStation et son PC Windows. La même application propose un mode
 pilote, un mur des stands et une démonstration clairement identifiée.
 
+![Aperçu de l'interface avec quatre voitures et un circuit fictifs](docs/images/demo.png)
+
 ## Télécharger et lancer sur Windows
 
 1. Ouvrir l'onglet **Actions** du dépôt et la dernière exécution verte

@@ -8,6 +8,7 @@ Aucune limitation artificielle de fréquence n'est appliquée.
 import csv
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 
 class GT7CSVRecorder:
@@ -59,12 +60,15 @@ class GT7CSVRecorder:
 
         self.file_path = (
             self.output_directory
-            / f"session_{timestamp}.csv"
+            / f"session_{timestamp}_{uuid4().hex}.csv"
         )
 
+        # L'horloge Windows peut retourner deux fois le même instant lors
+        # d'un redémarrage rapide. L'UUID différencie les sessions ; le mode
+        # exclusif protège aussi une session existante en cas de collision.
         self._file = open(
             self.file_path,
-            mode="w",
+            mode="x",
             newline="",
             encoding="utf-8",
         )
