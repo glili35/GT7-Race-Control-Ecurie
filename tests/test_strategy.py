@@ -99,6 +99,66 @@ class FuelStrategyTests(unittest.TestCase):
         self.assertFalse(strategy.update(sample(3, 20, total=20)).insufficient)
         self.assertTrue(strategy.update(sample(4, 15, total=20)).insufficient)
 
+    def test_gradual_refuelling_is_detected_and_affected_lap_is_excluded(self):
+        strategy = FuelStrategy()
+        for lap, fuel in [(1, 100), (2, 95), (3, 90), (3, 80)]:
+            estimate = strategy.update(sample(lap, fuel, flags=1))
+        self.assertEqual(estimate.measured_laps, 1)
+        # No individual delta exceeds the old 0.1% tank threshold.
+        for step in range(1, 101):
+            estimate = strategy.update(sample(3, 80 + step * 0.05, flags=1))
+        self.assertEqual(estimate.measured_laps, 0)
+        self.assertIsNone(estimate.consumption_percent_per_lap)
+        self.assertEqual(strategy.update(sample(4, 80, flags=1)).measured_laps, 0)
+        recovered = strategy.update(sample(5, 75, flags=1))
+        self.assertEqual(recovered.measured_laps, 1)
+        self.assertAlmostEqual(recovered.consumption_percent_per_lap, 5)
+
+    def test_small_fuel_oscillations_are_not_summed_as_refuelling(self):
+        strategy = FuelStrategy()
+        for lap, fuel in [(1, 100), (2, 95), (3, 90), (3, 80)]:
+            strategy.update(sample(lap, fuel, flags=1))
+        for _ in range(50):
+            strategy.update(sample(3, 80.05, flags=1))
+            estimate = strategy.update(sample(3, 80, flags=1))
+        self.assertEqual(estimate.measured_laps, 1)
+        self.assertAlmostEqual(estimate.consumption_percent_per_lap, 5)
+
+    def test_gradual_refuelling_across_lap_boundary_excludes_touched_laps(self):
+        strategy = FuelStrategy()
+        for lap, fuel in [(1, 100), (2, 95), (3, 90), (3, 80)]:
+            strategy.update(sample(lap, fuel, flags=1))
+        for step in range(1, 101):
+            strategy.update(sample(3 if step < 50 else 4, 80 + step * 0.05, flags=1))
+        self.assertEqual(strategy.update(sample(5, 80, flags=1)).measured_laps, 0)
+        recovered = strategy.update(sample(6, 75, flags=1))
+        self.assertEqual(recovered.measured_laps, 1)
+        self.assertAlmostEqual(recovered.consumption_percent_per_lap, 5)
+
+    def test_pause_preserves_estimate_without_processing_new_lap_or_fuel(self):
+        strategy = FuelStrategy()
+        for lap, fuel in [(1, 100), (2, 95), (3, 90)]:
+            before_pause = strategy.update(sample(lap, fuel, flags=1))
+        paused = strategy.update(sample(4, 60, flags=3))
+        self.assertEqual(paused, before_pause)
+        resumed = strategy.update(sample(3, 85, flags=1))
+        self.assertEqual(resumed.measured_laps, 1)
+        self.assertAlmostEqual(resumed.consumption_percent_per_lap, 5)
+
+    def test_inactive_and_loading_reset_history_and_skip_interrupted_lap(self):
+        for flags in (0, 4):
+            with self.subTest(flags=flags):
+                strategy = FuelStrategy()
+                for lap, fuel in [(1, 100), (2, 95), (3, 90)]:
+                    strategy.update(sample(lap, fuel, flags=1))
+                stopped = strategy.update(sample(3, 90, flags=flags))
+                self.assertEqual(stopped.measured_laps, 0)
+                self.assertEqual(strategy.update(sample(3, 88, flags=1)).measured_laps, 0)
+                self.assertEqual(strategy.update(sample(4, 85, flags=1)).measured_laps, 0)
+                recovered = strategy.update(sample(5, 80, flags=1))
+                self.assertEqual(recovered.measured_laps, 1)
+                self.assertAlmostEqual(recovered.consumption_percent_per_lap, 5)
+
 
 if __name__ == '__main__':
     unittest.main()

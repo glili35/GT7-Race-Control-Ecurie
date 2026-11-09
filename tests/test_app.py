@@ -129,7 +129,7 @@ class AppIntegrationTests(unittest.TestCase):
         self.assertFalse(self.app.demo)
         self.assertEqual(self.app.banner.winfo_manager(), "")
         self.assertTrue(all(not car.has_data for car in self.app.fleet.snapshots()))
-        self.assertIn("0 / 4 voitures en direct", self.app.summary.get())
+        self.assertIn("0 / 4 voitures connectées", self.app.summary.get())
         for card in self.app.cards.values():
             self.assertEqual(card.speed.cget("text"), "—")
             self.assertEqual(card.status.cget("text"), "EN ATTENTE")

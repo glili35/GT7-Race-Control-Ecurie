@@ -10,3 +10,4 @@ sessions/
 *credentials*.json
 .smoke-profile/
 smoke-report.json
+relay-private/

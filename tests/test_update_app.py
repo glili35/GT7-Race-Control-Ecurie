@@ -97,10 +97,10 @@ class UpdateAppTests(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
         original_record = self.Recorder.record
 
-        def blocked_record(recorder, telemetry):
+        def blocked_record(recorder, telemetry, **kwargs):
             entered.set()
             release.wait(3)
-            original_record(recorder, telemetry)
+            original_record(recorder, telemetry, **kwargs)
 
         self.Receiver.instances = []
         self.Receiver.fail_start = False
