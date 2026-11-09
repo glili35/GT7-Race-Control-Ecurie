@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import http.client
 import json
 from pathlib import Path
@@ -16,6 +17,7 @@ import uuid
 
 from racecontrol.transport import (
     EngineerHub, PilotLink, MAX_BODY, invitation_details, _parse_invitation,
+    ConnectionCheck, check_invitation, _pinned_connection,
 )
 
 
@@ -253,6 +255,194 @@ class TransportTests(unittest.TestCase):
             self.assertIsNone(link._pending)
             release.set()
             worker.join(timeout=1)
+        self.assertFalse(self.events)
+
+    def test_check_four_invitations_uses_tls_without_creating_telemetry(self):
+        # Une mesure réelle/synthétique déjà reçue ne doit pas être rafraîchie
+        # ou effacée par un test de liaison ; ses séquences restent inchangées.
+        self.assertEqual(self.post({'session': 'a' * 32, 'sequence': 42}), 204)
+        seen_before = copy.deepcopy(self.hub._seen)
+        events_before = list(self.events)
+        for number in range(1, 5):
+            result = check_invitation(self.hub.invitation(number, '127.0.0.1'))
+            self.assertIsInstance(result, ConnectionCheck)
+            self.assertTrue(result.ok)
+            self.assertEqual(result.code, 'ok')
+            self.assertEqual((result.host, result.port, result.car_number), ('127.0.0.1', self.hub.port, number))
+            self.assertIsNotNone(result.latency_ms)
+            self.assertGreaterEqual(result.latency_ms, 0)
+        self.assertEqual(self.hub._seen, seen_before)
+        self.assertEqual(self.events, events_before)
+        self.assertEqual(self.post({'session': 'a' * 32, 'sequence': 42}), 409)
+
+    def test_check_valid_invitation_never_calls_telemetry_callback(self):
+        self.hub._callback = lambda *_: self.fail('Le test de liaison ne doit pas appeler le callback')
+        result = check_invitation(self.hub.invitation(1, '127.0.0.1'))
+        self.assertTrue(result.ok)
+        self.assertEqual(self.hub._seen, {1: {}, 2: {}, 3: {}, 4: {}})
+        self.assertFalse(self.events)
+
+    def test_check_revoked_invitation_is_unauthorized_without_secret_in_result(self):
+        invitation = self.hub.invitation(1, '127.0.0.1')
+        token = _parse_invitation(invitation)['token']
+        self.hub.rotate_token(1)
+        result = check_invitation(invitation)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, 'unauthorized')
+        self.assertNotIn(token, repr(result))
+        self.assertNotIn(invitation, repr(result))
+        self.assertFalse(self.events)
+        self.assertTrue(check_invitation(self.hub.invitation(2, '127.0.0.1')).ok)
+
+    def test_check_wrong_pin_never_sends_an_http_request(self):
+        data = _parse_invitation(self.hub.invitation(1, '127.0.0.1'))
+        data['fingerprint'] = '0' * 64
+        invitation = 'gt7rc://' + base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip('=')
+        with patch.object(http.client.HTTPSConnection, 'request') as request:
+            result = check_invitation(invitation)
+            request.assert_not_called()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, 'certificate_mismatch')
+        self.assertNotIn(data['token'], repr(result))
+        self.assertFalse(self.events)
+
+    def test_check_invalid_invitation_never_connects(self):
+        with patch('racecontrol.transport._pinned_connection') as connect:
+            for invitation in ('', 'gt7rc://%%%', 'https://example.com', None):
+                result = check_invitation(invitation)
+                self.assertFalse(result.ok)
+                self.assertEqual(result.code, 'invalid_invitation')
+                self.assertIsNone(result.host)
+                self.assertIsNone(result.port)
+                self.assertIsNone(result.car_number)
+                self.assertIsNone(result.latency_ms)
+            connect.assert_not_called()
+
+    def test_check_old_engineer_endpoint_reports_update_required(self):
+        handler = self.hub._server.RequestHandlerClass
+        original_post = handler.do_POST
+        def old_post(request):
+            if request.path.startswith('/v1/check/'):
+                request._reply(404)
+            else:
+                original_post(request)
+        with patch.object(handler, 'do_POST', old_post):
+            result = check_invitation(self.hub.invitation(1, '127.0.0.1'))
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, 'incompatible_server')
+        self.assertIn('Mets à jour', result.message)
+        self.assertFalse(self.events)
+
+    def test_check_total_deadline_includes_a_blocked_dns_and_never_sends_late_secret(self):
+        invitation = self.hub.invitation(1, '127.0.0.1')
+        entered, release, closed = threading.Event(), threading.Event(), threading.Event()
+        requests = []
+        class FakeConnection:
+            def request(self, *_args, **_kwargs):
+                requests.append(True)
+            def close(self):
+                closed.set()
+        def stalled_connect(_):
+            entered.set()
+            release.wait(timeout=2)
+            return FakeConnection()
+        with patch('racecontrol.transport._pinned_connection', stalled_connect), \
+                patch('racecontrol.transport.CHECK_TIMEOUT_S', 0.05):
+            started = time.monotonic()
+            try:
+                result = check_invitation(invitation)
+                self.assertTrue(entered.is_set())
+                self.assertEqual(result.code, 'unreachable')
+                self.assertFalse(result.ok)
+                self.assertLess(time.monotonic() - started, 0.8)
+            finally:
+                release.set()
+                self.assertTrue(closed.wait(timeout=1))
+        self.assertFalse(requests, 'Un test expiré ne doit plus envoyer son secret')
+        self.assertFalse(self.events)
+
+    def test_check_concurrent_blocked_workers_are_bounded(self):
+        invitation = self.hub.invitation(1, '127.0.0.1')
+        release = threading.Event()
+        entered, closed, results = [], [], []
+        class FakeConnection:
+            def close(self):
+                closed.append(True)
+        def stalled_connect(_):
+            entered.append(True)
+            release.wait(timeout=2)
+            return FakeConnection()
+        workers = []
+        with patch('racecontrol.transport._pinned_connection', stalled_connect), \
+                patch('racecontrol.transport._CHECK_SLOTS', threading.BoundedSemaphore(2)), \
+                patch('racecontrol.transport.CHECK_TIMEOUT_S', 0.1):
+            try:
+                for _ in range(2):
+                    worker = threading.Thread(target=lambda: results.append(check_invitation(invitation)))
+                    workers.append(worker)
+                    worker.start()
+                wait_for(lambda: len(entered) == 2)
+                result = check_invitation(invitation)
+                self.assertEqual(result.code, 'unreachable')
+                self.assertIn('déjà en cours', result.message)
+                for worker in workers:
+                    worker.join(timeout=1)
+                self.assertEqual(len(results), 2)
+                self.assertTrue(all(not result.ok for result in results))
+                self.assertEqual(len(entered), 2)
+            finally:
+                release.set()
+                for worker in workers:
+                    worker.join(timeout=1)
+                wait_for(lambda: len(closed) == 2)
+        self.assertFalse(self.events)
+
+    def test_check_response_timeout_after_real_tls_is_unreachable(self):
+        handler = self.hub._server.RequestHandlerClass
+        entered, release = threading.Event(), threading.Event()
+        def slow_post(request):
+            entered.set()
+            release.wait(timeout=1)
+            request._reply(204)
+        with patch.object(handler, 'do_POST', slow_post), \
+                patch('racecontrol.transport.NETWORK_TIMEOUT_S', 0.1):
+            try:
+                result = check_invitation(self.hub.invitation(1, '127.0.0.1'))
+                self.assertTrue(entered.is_set())
+                self.assertEqual(result.code, 'unreachable')
+                self.assertFalse(result.ok)
+            finally:
+                release.set()
+        self.assertFalse(self.events)
+
+    def test_check_request_rejects_body_and_missing_length(self):
+        data = _parse_invitation(self.hub.invitation(1, '127.0.0.1'))
+        connection = _pinned_connection(data)
+        try:
+            connection.request('POST', '/v1/check/1', body=b'not-empty',
+                               headers={'Authorization': 'Bearer ' + data['token']})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 400)
+        finally:
+            connection.close()
+        connection = _pinned_connection(data)
+        try:
+            connection.putrequest('POST', '/v1/check/1')
+            connection.putheader('Authorization', 'Bearer ' + data['token'])
+            connection.endheaders()
+            response = connection.getresponse()
+            self.assertEqual(response.status, 400)
+        finally:
+            connection.close()
+        self.assertFalse(self.events)
+
+    def test_pinned_connection_cannot_auto_reconnect_after_close(self):
+        data = _parse_invitation(self.hub.invitation(1, '127.0.0.1'))
+        connection = _pinned_connection(data)
+        connection.close()
+        with self.assertRaises(http.client.NotConnected):
+            connection.request('POST', '/v1/check/1', body=b'',
+                               headers={'Content-Length': '0', 'Authorization': 'Bearer ' + data['token']})
         self.assertFalse(self.events)
 
     def test_invalid_invitation_rejected_before_any_connection(self):

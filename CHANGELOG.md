@@ -1,5 +1,21 @@
 # Historique
 
+## 0.6.0 Test
+
+- Ajoute un essai complet sur un seul PC avec la vraie PS5 : capture locale,
+  transmission HTTPS puis affichage ingénieur, sans injection simulée.
+- Vérifie une invitation avant la capture, sans rafraîchir la flotte.
+- Installe en une opération les tracés disponibles et signale les échecs séparément.
+- Propose un circuit parmi les tracés installés après plusieurs positions ;
+  les variantes ambiguës restent à choisir.
+- Préserve les réglages et le profil du canal Test 0.5.
+- Corrige l'inversion gauche-droite du tracé et des marqueurs par un miroir
+  horizontal activé par défaut, réglable dans Équipe et affichage.
+- Affiche les numéros de virage à partir des annotations des circuits :
+  19 à Spa, 11 à Monza et d'autres tracés disposant de coordonnées.
+- Réserve le port UDP à une seule capture et fiabilise la découverte automatique
+  sans changer le protocole ni le décodeur de la réception déjà validée.
+
 ## 0.5.0 Test
 
 - Relie la capture GT7 existante à un poste ingénieur de quatre voitures.
@@ -13,3 +29,7 @@
 - Vérifie les démarrages de l'application portable et installée dans le CI Windows.
 
 Validation matérielle et connexion entre domiciles restent à effectuer avec l'équipe.
+
+Réception locale PS5 confirmée par l'utilisateur : compteur de paquets en hausse
+et données visibles dans l'interface 0.5.0. La réception entre domiciles n'a pas
+encore été validée avec l'équipe.

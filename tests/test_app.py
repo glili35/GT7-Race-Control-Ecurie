@@ -7,6 +7,7 @@ Les profils et secrets éventuels sont exclusivement dans un dossier temporaire.
 from __future__ import annotations
 
 import json
+import gc
 import os
 import tempfile
 import time
@@ -74,8 +75,15 @@ class AppIntegrationTests(unittest.TestCase):
             pass
 
     def _close_windows(self):
-        for root, app in reversed(self.windows):
-            self._close_window(root, app)
+        while self.windows:
+            window = self.windows.pop()
+            self._close_window(*window)
+            del window
+        self.root = None
+        self.app = None
+        # Les objets Tcl/Tk doivent être libérés sur le thread graphique,
+        # avant qu'un test réseau déclenche le GC depuis un worker TLS.
+        gc.collect()
 
     def _attach_local_pilot(self):
         diagnostics = self.Diagnostics()

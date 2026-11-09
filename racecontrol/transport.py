@@ -26,6 +26,7 @@ from types import SimpleNamespace
 from typing import Callable
 import uuid
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -37,6 +38,8 @@ MAX_BODY = 16_384
 SAMPLE_TTL_S = 1.0
 SEND_INTERVAL_S = 0.1
 NETWORK_TIMEOUT_S = 1.5
+CHECK_TIMEOUT_S = 4.0
+_CHECK_SLOTS = threading.BoundedSemaphore(2)
 _FIELDS = {
     'speed_kmh': (-18, 720, False), 'rpm': (0, 30_000, False),
     'current_gear': (0, 15, True), 'throttle_percent': (0, 100, False),
@@ -121,6 +124,18 @@ def invitation_details(invitation: str) -> tuple[str, int, int]:
     """Informations publiques pour l'interface, sans révéler le secret."""
     data = _parse_invitation(invitation)
     return data['host'], data['port'], data['car']
+
+
+@dataclass(frozen=True)
+class ConnectionCheck:
+    """Résultat public d'un test de liaison, sans invitation ni jeton secret."""
+    ok: bool
+    code: str
+    message: str
+    host: str | None = None
+    port: int | None = None
+    car_number: int | None = None
+    latency_ms: float | None = None
 
 
 def _validate_telemetry(data):
@@ -305,11 +320,11 @@ class EngineerHub:
                 self.close_connection = True
 
             def do_POST(self):
-                match = re.fullmatch(r'/v1/telemetry/([1-4])', self.path)
+                match = re.fullmatch(r'/v1/(telemetry|check)/([1-4])', self.path)
                 if match is None:
                     self._reply(404)
                     return
-                number = int(match.group(1))
+                operation, number = match.group(1), int(match.group(2))
                 expected = 'Bearer ' + hub._tokens[str(number)]
                 supplied = self.headers.get('Authorization', '')
                 if len(supplied) != len(expected) or not hmac.compare_digest(supplied, expected):
@@ -323,6 +338,21 @@ class EngineerHub:
                     length = int(lengths[0])
                 except (ValueError, TypeError):
                     self._reply(400)
+                    return
+                if operation == 'check':
+                    # Un test ne transporte aucune mesure et ne modifie ni la
+                    # fraîcheur de la flotte, ni les séquences de télémétrie.
+                    if lengths[0] != '0':
+                        self._reply(400)
+                        return
+                    with hub._lock:
+                        if not hub._running:
+                            status = 503
+                        elif not hmac.compare_digest(supplied, 'Bearer ' + hub._tokens[str(number)]):
+                            status = 401
+                        else:
+                            status = 204
+                    self._reply(status)
                     return
                 if not 0 < length <= MAX_BODY:
                     self._reply(413)
@@ -414,6 +444,116 @@ class _PinError(OSError):
     pass
 
 
+def _pinned_connection(address):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    # Autorité privée : la confiance est l'empreinte fournie hors bande dans
+    # l'invitation, pas un certificat public. Vérification AVANT le secret.
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    connection = http.client.HTTPSConnection(address['host'], address['port'],
+                                           timeout=NETWORK_TIMEOUT_S, context=context)
+    try:
+        connection.connect()
+        cert = connection.sock.getpeercert(binary_form=True)
+        actual = hashlib.sha256(cert).hexdigest()
+        if not hmac.compare_digest(actual, address['fingerprint']):
+            raise _PinError('Certificat ingénieur différent')
+        # Une fermeture concurrente ne doit jamais déclencher la reconnexion
+        # automatique de http.client sans nouvelle vérification d'empreinte.
+        connection.auto_open = 0
+    except Exception:
+        connection.close()
+        raise
+    return connection
+
+
+def check_invitation(invitation: str) -> ConnectionCheck:
+    """Teste TLS et l'autorisation d'une invitation, sans simuler une voiture.
+
+    Cet appel synchrone doit être exécuté hors du thread graphique. Son délai
+    total est borné, y compris si le résolveur DNS système reste bloqué. Deux
+    workers maximum sont conservés ; un test expiré n'envoie plus de secret
+    après une résolution tardive. Aucun état de pilote n'est créé.
+    """
+    try:
+        address = _parse_invitation(invitation)
+    except ValueError:
+        return ConnectionCheck(False, 'invalid_invitation',
+                               'Invitation invalide ou incompatible. Copie une nouvelle invitation depuis le poste ingénieur.')
+    public = {'host': address['host'], 'port': address['port'], 'car_number': address['car']}
+
+    def result(ok, code, message, latency_ms=None):
+        return ConnectionCheck(ok, code, message, latency_ms=latency_ms, **public)
+
+    if not _CHECK_SLOTS.acquire(blocking=False):
+        return result(False, 'unreachable',
+                      'Des tests de connexion sont déjà en cours. Réessaie dans quelques instants.')
+    done, cancelled = threading.Event(), threading.Event()
+    outcome = []
+    active = []
+    active_lock = threading.Lock()
+    started = time.monotonic()
+
+    def worker():
+        connection = None
+        try:
+            connection = _pinned_connection(address)
+            with active_lock:
+                if cancelled.is_set():
+                    return
+                active.append(connection)
+            # Vérifier une dernière fois avant toute donnée d'authentification.
+            if cancelled.is_set():
+                return
+            connection.request('POST', f'/v1/check/{address["car"]}', body=b'',
+                               headers={'Content-Length': '0',
+                                        'Authorization': 'Bearer ' + address['token']})
+            response = connection.getresponse()
+            status = response.status
+            if status == 204:
+                elapsed = (time.monotonic() - started) * 1000
+                outcome.append(result(True, 'ok',
+                                      'Connexion au poste ingénieur vérifiée. Aucune donnée PS5 n’a été envoyée.', elapsed))
+            elif status in (401, 403):
+                outcome.append(result(False, 'unauthorized',
+                                      'Invitation refusée. Demande une nouvelle invitation au poste ingénieur.'))
+            elif status in (408, 429, 500, 502, 503, 504):
+                outcome.append(result(False, 'unreachable',
+                                      'Le poste ingénieur est momentanément indisponible. Vérifie qu’il est démarré, puis réessaie.'))
+            else:
+                message = ('Le poste ingénieur ne prend pas en charge ce test. Mets à jour son logiciel, puis réessaie.'
+                           if status in (404, 405, 501) else
+                           'Réponse du poste ingénieur incompatible. Vérifie sa version et mets-le à jour.')
+                outcome.append(result(False, 'incompatible_server', message))
+        except _PinError:
+            outcome.append(result(False, 'certificate_mismatch',
+                                  'Le certificat du poste ingénieur a changé. Demande une nouvelle invitation.'))
+        except (OSError, ValueError, http.client.HTTPException):
+            outcome.append(result(False, 'unreachable',
+                                  'Poste ingénieur injoignable. Vérifie qu’il est démarré et que son adresse est accessible.'))
+        finally:
+            if connection is not None:
+                connection.close()
+            _CHECK_SLOTS.release()
+            done.set()
+
+    try:
+        threading.Thread(target=worker, name='gt7-connection-check', daemon=True).start()
+    except Exception:
+        _CHECK_SLOTS.release()
+        return result(False, 'unreachable', 'Impossible de démarrer le test de connexion. Réessaie.')
+    if not done.wait(timeout=CHECK_TIMEOUT_S):
+        cancelled.set()
+        with active_lock:
+            connection = active[0] if active else None
+        if connection is not None:
+            connection.close()
+        return result(False, 'unreachable',
+                      'Le test de connexion a expiré. Vérifie l’adresse du poste ingénieur et sa connexion réseau.')
+    return outcome[0] if outcome else result(False, 'unreachable', 'Test de connexion interrompu. Réessaie.')
+
+
 class PilotLink:
     """Envoie le dernier échantillon à 10 Hz maximum, sans bloquer le thread UDP."""
     def __init__(self, invitation: str, on_status: Callable[[str], None] | None = None):
@@ -467,20 +607,7 @@ class PilotLink:
         self._wake.set()
 
     def _connect(self):
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        # Autorité privée : la confiance est l'empreinte fournie hors bande dans
-        # l'invitation, pas un certificat public. Vérification AVANT le secret.
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        connection = http.client.HTTPSConnection(self._address['host'], self._address['port'],
-                                                   timeout=NETWORK_TIMEOUT_S, context=context)
-        connection.connect()
-        cert = connection.sock.getpeercert(binary_form=True)
-        actual = hashlib.sha256(cert).hexdigest()
-        if not hmac.compare_digest(actual, self._address['fingerprint']):
-            connection.close()
-            raise _PinError('Certificat ingénieur différent')
+        connection = _pinned_connection(self._address)
         self._connection = connection
         return connection
 

@@ -2,6 +2,7 @@
 import io
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -159,6 +160,146 @@ class CircuitTests(unittest.TestCase):
             self.skipTest("création des liens symboliques non autorisée")
         with self.assertRaisesRegex(circuits.CircuitLibraryError, "sort du dossier"):
             self.library.chemin("Test")
+
+
+    def cache_with_corners(self, corners):
+        data = json.loads(self.payload)
+        data["corners"] = corners
+        return self.put_cache(json.dumps(data).encode())
+
+    def test_corner_anchors_are_read_in_number_order_without_changing_coordinates(self):
+        self.cache_with_corners([
+            {"n": 3, "name": "Raidillon", "apex": {"x": 83.1, "z": -462.1}},
+            {"n": 1, "name": "La Source", "apex": {"x": -494.7, "z": -936.4}},
+        ])
+        with patch.object(circuits, "urlopen") as download:
+            self.assertEqual(self.library.charger_virages("Test"), (
+                circuits.CornerPoint(1, "La Source", -494.7, -936.4),
+                circuits.CornerPoint(3, "Raidillon", 83.1, -462.1),
+            ))
+            download.assert_not_called()
+        self.assertIsNone(self.library.erreur_cache("Test"))
+
+    def test_old_cache_without_corner_metadata_remains_compatible(self):
+        self.put_cache()
+        self.assertEqual(self.library.charger_virages("Test"), ())
+        self.assertIsNone(self.library.erreur_cache("Test"))
+        self.assertTrue(self.library.est_installe("Test"))
+
+    def test_absent_corner_cache_never_triggers_download(self):
+        with patch.object(circuits, "urlopen") as download:
+            self.assertEqual(self.library.charger_virages("Test"), ())
+            self.assertEqual(self.library.charger_virages("Sans bordures"), ())
+            download.assert_not_called()
+        self.assertFalse((self.root / "cache").exists())
+
+    def test_invalid_optional_corner_data_does_not_disable_valid_borders(self):
+        valid = {"n": 1, "name": "Premier virage", "apex": {"x": 10.0, "z": 20.0}}
+        malformed = [
+            [valid, valid],
+            [{**valid, "n": 0}],
+            [{**valid, "n": -1}],
+            [{**valid, "n": True}],
+            [{**valid, "n": "1"}],
+            [{**valid, "apex": None}],
+            [{**valid, "apex": {"x": float("nan"), "z": 20}}],
+            [{**valid, "apex": {"x": 10, "z": float("inf")}}],
+            [{**valid, "apex": {"x": True, "z": 20}}],
+            [{**valid, "apex": {"x": "10", "z": 20}}],
+            [{**valid, "name": 12}],
+            {"unexpected": "object"},
+        ]
+        for corners in malformed:
+            with self.subTest(corners=corners):
+                path = self.cache_with_corners(corners)
+                before = path.read_bytes()
+                self.assertEqual(self.library.charger_virages("Test"), ())
+                self.assertIn("Annotations des virages", self.library.erreur_cache("Test"))
+                self.assertTrue(self.library.charger_points("Test"))
+                self.assertTrue(self.library.est_installe("Test"))
+                self.assertEqual(path.read_bytes(), before)
+
+    def bulk_library(self, entries=None):
+        entries = entries or [
+            {"official_name": name, "bundle": {"file": f"tracks/{name.lower()}.json"}}
+            for name in ("A", "B", "C")
+        ]
+        self.index.write_text(json.dumps({"configurations": entries}), encoding="utf-8")
+        return circuits.CircuitLibrary(self.root / "cache", self.index)
+
+    def test_bulk_preserves_valid_cache_and_continues_after_one_failure(self):
+        library = self.bulk_library()
+        cached = library.chemin("A")
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(self.payload)
+        events = []
+        with patch.object(circuits, "urlopen", side_effect=[OSError("source indisponible"), Download(self.payload)]) as download:
+            report = library.installer_tous(lambda *event: events.append(event))
+        self.assertEqual(report.already_present, ("A",))
+        self.assertEqual(report.installed, ("C",))
+        self.assertEqual(report.failed, {"B": "source indisponible"})
+        self.assertFalse(report.cancelled)
+        self.assertEqual(download.call_count, 2)
+        self.assertEqual(cached.read_bytes(), self.payload)
+        self.assertEqual(events, [(1, 3, "A", "prêt"), (2, 3, "B", "échec"), (3, 3, "C", "installé")])
+
+    def test_bulk_cancellation_is_honoured_between_files(self):
+        library = self.bulk_library()
+        cancel = threading.Event()
+        events = []
+        def progress(*event):
+            events.append(event)
+            cancel.set()
+        with patch.object(circuits, "urlopen", side_effect=lambda *args, **kwargs: Download(self.payload)) as download:
+            report = library.installer_tous(progress, cancel)
+        self.assertEqual(report.installed, ("A",))
+        self.assertTrue(report.cancelled)
+        self.assertEqual(download.call_count, 1)
+        self.assertEqual(len(events), 1)
+        self.assertFalse(library.chemin("B").exists())
+
+    def test_bulk_already_cancelled_performs_no_network_or_cache_write(self):
+        library = self.bulk_library()
+        cancel = threading.Event()
+        cancel.set()
+        with patch.object(circuits, "urlopen") as download:
+            report = library.installer_tous(cancel=cancel)
+        self.assertTrue(report.cancelled)
+        self.assertFalse(report.installed)
+        self.assertFalse((self.root / "cache").exists())
+        download.assert_not_called()
+
+    def test_bulk_shared_bundle_downloads_once_for_all_configuration_names(self):
+        library = self.bulk_library([
+            {"official_name": "A", "bundle": {"file": "tracks/shared.json"}},
+            {"official_name": "A Reverse", "bundle": {"file": "tracks/shared.json"}},
+            {"official_name": "Sans géométrie", "bundle": None},
+        ])
+        with patch.object(circuits, "urlopen", side_effect=lambda *args, **kwargs: Download(self.payload)) as download:
+            report = library.installer_tous()
+            self.assertEqual(report.installed, ("A", "A Reverse"))
+            self.assertEqual(download.call_count, 1)
+            repeated = library.installer_tous()
+            self.assertEqual(repeated.already_present, ("A", "A Reverse"))
+            self.assertEqual(download.call_count, 1)
+        self.assertFalse(report.failed)
+        self.assertFalse(report.cancelled)
+
+    def test_bulk_callback_failure_does_not_interrupt_other_downloads(self):
+        library = self.bulk_library()
+        def progress(*_):
+            raise RuntimeError("la fenêtre a été fermée")
+        with patch.object(circuits, "urlopen", side_effect=lambda *args, **kwargs: Download(self.payload)):
+            report = library.installer_tous(progress)
+        self.assertEqual(report.installed, ("A", "B", "C"))
+        self.assertFalse(report.failed)
+
+    def test_bulk_missing_catalogue_is_an_explicit_error(self):
+        library = circuits.CircuitLibrary(self.root / "cache", self.root / "absent.json")
+        with patch.object(circuits, "urlopen") as download:
+            with self.assertRaisesRegex(circuits.CircuitLibraryError, "Catalogue"):
+                library.installer_tous()
+            download.assert_not_called()
 
 
 if __name__ == "__main__":

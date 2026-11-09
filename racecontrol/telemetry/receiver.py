@@ -16,6 +16,7 @@ qu'après réception et décodage réussi d'un paquet GT7.
 from __future__ import annotations
 
 import socket
+import errno
 import ipaddress
 import struct
 import threading
@@ -158,11 +159,12 @@ class GT7Receiver:
             )
 
             try:
-                udp_socket.setsockopt(
-                    socket.SOL_SOCKET,
-                    socket.SO_REUSEADDR,
-                    1,
-                )
+                # Un seul récepteur doit posséder la télémétrie de cette PS5.
+                # SO_REUSEADDR permettrait à une deuxième instance de capter
+                # silencieusement les mêmes paquets. UDP n'a pas de TIME_WAIT.
+                exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+                if exclusive is not None:
+                    udp_socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
 
                 udp_socket.setsockopt(
                     socket.SOL_SOCKET,
@@ -176,8 +178,14 @@ class GT7Receiver:
 
                 udp_socket.settimeout(0.25)
 
-            except OSError:
+            except OSError as exc:
                 udp_socket.close()
+                if exc.errno == errno.EADDRINUSE or getattr(exc, "winerror", None) == 10048:
+                    raise OSError(
+                        exc.errno,
+                        f"Le port UDP {self.listen_port} est déjà utilisé. "
+                        "Ferme l'autre connexion PS5 ou l'autre instance du logiciel.",
+                    ) from exc
                 raise
 
             self._socket = udp_socket
@@ -245,13 +253,29 @@ class GT7Receiver:
         """Détermine l'adresse de destination du heartbeat."""
 
         with self._state_lock:
-            if self.ps5_ip:
-                return self.ps5_ip
-
-            if self._discovered_ps5_ip:
-                return self._discovered_ps5_ip
+            source = self._active_source_locked(time.monotonic())
+            if source is not None:
+                return source
 
         return "255.255.255.255"
+
+    def _active_source_locked(self, now: float) -> Optional[str]:
+        """Source sélectionnée ; l'appelant possède ``_state_lock``.
+
+        L'IP configurée reste fixe. En découverte automatique, seule une
+        console dont la télémétrie décodée est récente reste sélectionnée.
+        Après la perte du signal, un nouveau heartbeat broadcast permet de
+        retrouver la console même si son adresse DHCP a changé.
+        """
+        if self.ps5_ip is not None:
+            return self.ps5_ip
+        if (
+            self._discovered_ps5_ip is not None
+            and self._last_telemetry_time is not None
+            and now - self._last_telemetry_time <= 3.0
+        ):
+            return self._discovered_ps5_ip
+        return None
 
     def _heartbeat_loop(self) -> None:
         """Envoie le heartbeat périodiquement."""
@@ -307,17 +331,16 @@ class GT7Receiver:
 
             source_ip = source[0]
 
-            # Si une IP PS5 est configurée, ignorer
-            # immédiatement les paquets provenant des autres machines.
-            if (
-                self.ps5_ip is not None
-                and source_ip != self.ps5_ip
-            ):
+            # Une console découverte est également verrouillée tant qu'elle
+            # répond. Un second flux valide ne doit pas mélanger deux voitures.
+            now = time.monotonic()
+            with self._state_lock:
+                expected_source = self._active_source_locked(now)
+            if expected_source is not None and source_ip != expected_source:
                 self.diagnostics.record_rejected_source()
-                now = time.monotonic()
                 if now - self._last_rejection_log >= 30:
                     self._last_rejection_log = now
-                    self._emit_status("Paquets UDP ignorés : source différente de la PS5 configurée.")
+                    self._emit_status("Paquets UDP ignorés : source différente de la PS5 sélectionnée.")
                 continue
 
             self.diagnostics.record_datagram(source_ip)
@@ -352,8 +375,8 @@ class GT7Receiver:
             self.diagnostics.record_decoded()
 
             with self._state_lock:
-                first_discovery = (
-                    self._discovered_ps5_ip is None
+                new_discovery = (
+                    self._discovered_ps5_ip != source_ip
                     and self.ps5_ip is None
                 )
 
@@ -362,7 +385,7 @@ class GT7Receiver:
 
                 self._last_stale_notification = 0.0
 
-            if first_discovery:
+            if new_discovery:
                 self._emit_status(
                     f"Console GT7 détectée : {source_ip}"
                 )

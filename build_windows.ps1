@@ -21,7 +21,8 @@ function Test-ApplicationStartup {
     $reportPath = Join-Path $SmokeDirectory "startup.json"
     Remove-Item -LiteralPath $reportPath -ErrorAction SilentlyContinue
 
-    # Le test ne doit ni lire la configuration d'un pilote ni ouvrir sa PS5.
+    # Le smoke exerce les vues pilote et ingénieur avec des données synthétiques.
+    # Il ne doit ni lire la configuration d'un pilote ni contacter sa vraie PS5.
     $previousDataDirectory = $env:GT7RC_DATA_DIR
     $env:GT7RC_DATA_DIR = Join-Path $SmokeDirectory "profile"
     try {
@@ -39,8 +40,8 @@ function Test-ApplicationStartup {
             throw "Le test n'a pas produit son rapport : $reportPath"
         }
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($report.ok -ne $true -or $report.version -ne "0.5.0") {
-            throw "Le rapport ne confirme pas le démarrage de la version 0.5.0."
+        if ($report.ok -ne $true -or $report.version -ne "0.6.0") {
+            throw "Le rapport ne confirme pas le démarrage de la version 0.6.0."
         }
         Write-Host "Démarrage de l'interface vérifié : $ApplicationPath"
         Write-Host "Rapport : $reportPath"
