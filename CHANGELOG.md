@@ -1,5 +1,17 @@
 # Historique
 
+## 0.8.1 Test
+
+- Corrige le refus erroné « L'installateur a changé pendant sa vérification »
+  sous Windows, tout en conservant les contrôles de taille, d'empreinte et de
+  remplacement du fichier avant son lancement.
+- Propose un nouveau téléchargement lorsqu'un fichier est absent ou invalide,
+  au lieu de réessayer son installation en boucle.
+- Depuis 0.7 ou 0.8, installer manuellement 0.8.1 une seule fois : le défaut se
+  trouve dans l'ancien lanceur, qui ne peut pas appliquer lui-même ce correctif.
+  Les mises à jour suivantes pourront ensuite utiliser le bouton du logiciel.
+- Conserve le profil, les réglages, les circuits et les sessions du canal Test.
+
 ## 0.8.0 Test
 
 - Ajoute un relais optionnel : pilote et ingénieur ouvrent chacun une connexion
@@ -12,8 +24,8 @@
   mesures hors piste et suspend l'apprentissage de consommation pendant la pause.
 - Détecte aussi les ravitaillements progressifs et date chaque ligne CSV à la
   réception du paquet plutôt qu'à son écriture sur disque.
-- Conserve le profil du canal Test et peut être installée depuis le bouton
-  **Mises à jour** de la version 0.7.
+- Conserve le profil du canal Test. L'installation depuis le bouton
+  **Mises à jour** de 0.7 peut subir le faux refus Windows corrigé dans 0.8.1.
 
 ## 0.7.0 Test
 

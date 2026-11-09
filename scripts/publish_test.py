@@ -294,7 +294,7 @@ def main():
     parser.add_argument("--target-sha", required=True)
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--verify-public", action="store_true")
-    parser.add_argument("--previous-version", default="0.7.0")
+    parser.add_argument("--previous-version", default="0.8.0")
     args = parser.parse_args()
     try:
         if not VERSION_PATTERN.fullmatch(args.version) or not SHA_PATTERN.fullmatch(args.target_sha):

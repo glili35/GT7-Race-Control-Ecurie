@@ -14,6 +14,7 @@ import tkinter as tk
 import unittest
 from unittest.mock import patch
 
+from racecontrol.update_install import InstallerError, InstallerFileError
 from racecontrol.updates import UpdateCancelled, UpdateInfo
 
 
@@ -317,7 +318,7 @@ class UpdatePanelTests(unittest.TestCase):
 
     def test_failed_installer_launch_keeps_application_open_for_retry(self):
         self.offer_update()
-        self.launch.side_effect = OSError("Windows n'a pas pu ouvrir l'installateur")
+        self.launch.side_effect = InstallerError("Windows n'a pas pu ouvrir l'installateur")
         self.click_update()
         self.idle()
         self.assertIn("Windows n'a pas pu ouvrir", self.panel.status.get())
@@ -328,6 +329,42 @@ class UpdatePanelTests(unittest.TestCase):
         self.assertEqual(str(self.panel.install_button.cget("state")), "normal")
         self.assertEqual(len(self.logs), 1)
         self.assertEqual(self.logs[0][0], self.main_thread)
+        self.assertEqual(self.panel.install_button.cget("text"), "Réessayer l'installation")
+        self.launch.side_effect = None
+        self.click_update()
+        self.idle()
+        self.assertEqual(self.fake.download_calls, 1)
+        self.assertEqual(self.launch.call_count, 2)
+        self.assertEqual(self.installed, [self.main_thread])
+
+    def test_invalid_installer_requires_new_download_before_another_install_attempt(self):
+        self.offer_update()
+        self.launch.side_effect = [InstallerFileError("Le fichier a changé. Télécharge-le à nouveau."), object()]
+        self.click_update()
+        self.idle()
+        self.assertEqual(self.fake.download_calls, 1)
+        self.launch.assert_called_once_with(self.fake, self.info, self.installer_path)
+        self.assertIsNone(self.panel.downloaded)
+        self.assertEqual(self.panel.progress.get(), 0)
+        self.assertEqual(self.panel.install_button.cget("text"), "Télécharger à nouveau")
+        self.assertEqual(str(self.panel.install_button.cget("state")), "normal")
+        self.assertIn("Télécharge-le à nouveau", self.panel.status.get())
+        self.assertFalse(self.installed)
+        self.assertFalse(self.panel.installing)
+        self.assertTrue(self.root.winfo_exists())
+        self.assertIs(self.panel.info, self.info)
+        self.assertEqual(len(self.logs), 1)
+        self.assertEqual(self.logs[0][0], self.main_thread)
+        # Le second clic utilise un nouveau téléchargement et son nouveau chemin.
+        replacement = self.profile / "nouveau-telechargement.exe"
+        self.fake.destination = replacement
+        self.click_update()
+        self.idle()
+        self.assertEqual(self.fake.download_calls, 2)
+        self.assertEqual(self.launch.call_count, 2)
+        self.launch.assert_called_with(self.fake, self.info, replacement)
+        self.assertEqual(self.panel.downloaded, replacement)
+        self.assertEqual(self.installed, [self.main_thread])
 
     def test_success_notifies_main_thread_only_after_launch_helper_returns(self):
         self.offer_update()

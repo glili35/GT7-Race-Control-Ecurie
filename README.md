@@ -1,4 +1,4 @@
-# GT7 Race Control Écurie — 0.8.0 Test
+# GT7 Race Control Écurie — 0.8.1 Test
 
 Un poste ingénieur pour réunir les télémétries de **quatre pilotes GT7**, chacun
 avec sa PlayStation et son PC Windows. La même application propose un mode
@@ -8,31 +8,41 @@ pilote, un mur des stands et une démonstration clairement identifiée.
 
 ## Télécharger et lancer sur Windows
 
-1. Depuis la version 0.7 ou ultérieure, ouvrir **Mises à jour**. Pour une première installation, télécharger [l'installateur Windows 0.8.0 Test](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/download/test-v0.8.0/GT7-Race-Control-Ecurie-Setup-0.8.0-test.exe).
-2. Fermer la version en cours, puis lancer `GT7-Race-Control-Ecurie-Setup-0.8.0-test.exe` si le téléchargement a été fait manuellement.
+1. Télécharger [l'installateur Windows 0.8.1 Test](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/download/test-v0.8.1/GT7-Race-Control-Ecurie-Setup-0.8.1-test.exe), pour une première installation ou pour corriger la mise à jour depuis 0.7/0.8.
+2. Arrêter la capture et fermer la version en cours, puis lancer `GT7-Race-Control-Ecurie-Setup-0.8.1-test.exe`.
 3. Ouvrir **GT7 Race Control Écurie (Test)** depuis le menu Démarrer.
 
 L'installateur et l'archive portable sont disponibles dans la
-[publication Test 0.8.0](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/tag/test-v0.8.0),
+[publication Test 0.8.1](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/tag/test-v0.8.1),
 sans compte GitHub. Les artifacts de compilation restent disponibles dans Actions.
 
-Python et les bibliothèques sont inclus. L'installateur n'est pas signé.
+Les versions 0.7 et 0.8 peuvent refuser un installateur valide avec le message
+« L'installateur a changé pendant sa vérification ». Le défaut étant dans leur
+lanceur déjà installé, un passage manuel unique à 0.8.1 est nécessaire. Il n'est
+pas nécessaire de désinstaller le canal Test ni d'effacer son profil.
+
+Python et les bibliothèques sont inclus dans l'installateur et dans la version
+portable : aucune installation séparée de Python n'est nécessaire sur le PC.
+L'installateur n'est pas signé.
 Le canal Test utilise un dossier et un identifiant différents de la version
 historique : il peut être essayé sans la désinstaller.
-L'archive `Portable` permet aussi un lancement sans installation.
+L'archive `Portable` permet aussi un lancement sans installation. Extraire tout
+le ZIP, puis lancer `GT7-Race-Control-Ecurie.exe` depuis le dossier extrait.
+Conserver tous les fichiers et sous-dossiers ensemble : copier l'EXE seul ne suffit pas.
 
 Le bouton **Démonstration** présente quatre voitures fictives et une carte fictive,
 sans connexion PS5, transmission réseau ni enregistrement de session.
 Un bandeau indique ce mode en permanence.
 
-La version 0.8 met à jour le canal Test existant en conservant son profil.
+La version 0.8.1 met à jour le canal Test existant en conservant son profil.
 La réception PS5 et l'essai complet sur un seul PC de la version 0.6 ont été
-confirmés par l'utilisateur. La version 0.8 conserve ces fonctions et ajoute
-un relais optionnel, dont le parcours peut aussi être essayé sur un seul PC.
+confirmés par l'utilisateur. La version 0.8.1 conserve ces fonctions ainsi que
+le relais optionnel de 0.8, dont le parcours peut être essayé sur un seul PC.
 
 ## Mises à jour depuis le logiciel
 
-La version 0.7 apporte le bouton **Mises à jour** :
+Après le passage manuel à 0.8.1, utiliser le bouton **Mises à jour** pour les
+publications suivantes :
 
 1. Cliquer **Mises à jour**, ou ouvrir l'onglet du même nom.
 2. Le logiciel vérifie les publications publiques du canal Test. S'il est à jour,
@@ -42,8 +52,8 @@ La version 0.7 apporte le bouton **Mises à jour** :
    ouvre l'assistant Windows. L'application se ferme après le lancement réussi
    de l'installateur. Terminer l'assistant pour rouvrir la nouvelle version.
 
-Il faut installer manuellement 0.7 ou une version plus récente une première fois pour obtenir ce mécanisme.
-Les versions suivantes pourront être récupérées depuis ce bouton, sans passer
+Le bouton existe depuis 0.7 ; le contrôle de fichier sous Windows est corrigé
+dans 0.8.1. Les versions suivantes pourront être récupérées depuis ce bouton, sans passer
 par les pages GitHub. Aucun téléchargement ni lancement n'est effectué au démarrage.
 La recherche et le téléchargement s'exécutent en arrière-plan ; le téléchargement
 peut être annulé. Si une capture démarre entre-temps, le fichier reste prêt et

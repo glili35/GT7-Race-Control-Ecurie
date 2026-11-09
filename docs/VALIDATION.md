@@ -30,9 +30,10 @@ juste avant l'ouverture de l'assistant Windows.
 
 Le CI a vérifié le téléchargement public de 0.7 avec le vrai client, sans
 authentification, et les démarrages des EXE portable et installé sous Windows.
-L'utilisateur doit installer 0.7 ou une version ultérieure une première fois
-avant de pouvoir utiliser ce bouton. Le passage entre deux versions par
-l'assistant sur son propre PC reste à confirmer.
+Le premier essai utilisateur de passage 0.7 → 0.8 révèle ensuite un refus
+erroné après le téléchargement : « L'installateur a changé pendant sa
+vérification ». La publication et le téléchargement étaient donc validés,
+mais le lancement depuis le logiciel restait à corriger.
 
 ## Relais et états de séance — version 0.8.0 Test
 
@@ -57,11 +58,38 @@ chargement et le hors-piste masquent les valeurs et les marqueurs de carte.
 Aucun relais public n'est déployé. L'essai **Relais local** avec la vraie PS5,
 puis la connexion entre deux domiciles, restent à effectuer avec l'équipe.
 
+## Contrôle de l'installateur — version 0.8.1 Test
+
+Le diagnostic correspond au comportement de CPython 3.12 sous Windows :
+`lstat(path).st_ctime_ns` représente la création du fichier, tandis que
+`fstat(fd).st_ctime_ns` représente sa dernière modification de métadonnées.
+Comparer directement ces deux valeurs peut donc refuser un fichier intact.
+La taille, l'identité et l'empreinte restent à contrôler ; les dates de changement
+doivent être comparées entre observations provenant de la même API.
+
+Le correctif est préparé pour vérifier notamment une écriture après création,
+suivie du renommage utilisé à la fin du téléchargement. Le CI Windows passe
+l'installateur réellement construit par `launch_installer` avant son unique
+installation silencieuse, puis contrôle le démarrage de l'EXE installé. Les
+résultats du CI de 0.8.1 et du prochain essai utilisateur restent à confirmer.
+Les démarrages portable/installé de 0.8 et le téléchargement public déjà
+réussis ne valident pas à eux seuls cette étape du lanceur de mise à jour.
+
+Le passage manuel unique à 0.8.1 est nécessaire depuis 0.7 ou 0.8, puisque
+leur lanceur contient le défaut. Le chemin et l'identifiant du canal Test
+restent identiques pour conserver le profil existant.
+
 ## Contrôles automatisés
 
 Le workflow Windows construit le commit de la branche, démarre l'exécutable
 portable, installe le logiciel puis démarre l'exécutable installé. Chaque
 démarrage doit fournir un rapport JSON positif avec la version attendue.
+Pour 0.8.1, le contrôle vérifie également la présence du runtime Python embarqué
+dans `_internal`, puis limite le PATH aux répertoires Windows système avant le
+lancement des deux EXE. Le PATH initial est restauré après chaque essai. Ce test
+n'enlève pas le Python installé sur le runner ; il vérifie que les démarrages
+n'ont pas besoin d'un interpréteur Python accessible dans PATH. Son résultat
+doit être confirmé par le prochain CI Windows.
 
 Les tests des protocoles, connexions et stratégies emploient des données
 synthétiques. Les tests de reconnaissance utilisent aussi des géométries
@@ -69,7 +97,8 @@ synthétiques pour vérifier les cas ambigus et les mauvaises correspondances.
 
 ## Essais à poursuivre
 
-- Installation de 0.8 par le mécanisme de mise à jour et conservation des réglages.
+- Installation manuelle de 0.8.1 et conservation des réglages du canal Test.
+- Lancement d'une mise à jour suivante depuis le logiciel corrigé.
 - Essai Relais local avec la vraie PS5, incluant pause, chargement et retour piste.
 - Proposition du circuit réellement parcouru.
 - Réception depuis un autre PC, puis depuis un autre domicile.
