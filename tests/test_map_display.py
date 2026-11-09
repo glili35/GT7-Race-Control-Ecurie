@@ -17,8 +17,9 @@ class FakeMapLibrary:
     """Géométrie volontairement asymétrique pour révéler un miroir manquant."""
 
     def __init__(self):
-        from racecontrol.circuits import CornerPoint
+        from racecontrol.circuits import CornerPoint, INDEX
 
+        self.index_path = INDEX
         self.erreur_catalogue = None
         self.noms = ["Circuit asymétrique de test"]
         self.entrees = {self.noms[0]: {"bundle": {"file": "tracks/test.json"}}}
@@ -36,6 +37,10 @@ class FakeMapLibrary:
 
     def charger_virages(self, name):
         return self.corners if name in self.entrees else ()
+
+    def annotations_virages(self, name):
+        from racecontrol.circuits import CornerSet
+        return CornerSet(self.charger_virages(name), "documented", "Fixture", "test")
 
 
 class MapDisplayIntegrationTests(unittest.TestCase):

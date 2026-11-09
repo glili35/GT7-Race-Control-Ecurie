@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from racecontrol import circuits
 from racecontrol.track_matcher import TrackMatcher
+from racecontrol.track_paths import TrackPaths
 
 
 def lane(z=0.0, *, start=0, end=900):
@@ -37,6 +38,75 @@ class TrackMatcherTests(unittest.TestCase):
                 {"x": x, "z": z, "side": side} for x, z, side in points
             ]}), encoding="utf-8")
         return circuits.CircuitLibrary(self.cache, self.index)
+
+    def paths(self, library, rows):
+        for row in rows:
+            library.entrees[row["official_name"]].update(
+                official_id=row["official_id"], reverse=row["reverse"])
+        self.index.write_text(json.dumps({"configurations": list(library.entrees.values())}), encoding="utf-8")
+        pack = self.root / "paths.json"
+        pack.write_text(json.dumps({"format": "gt7-race-control-track-paths", "version": 1,
+                                    "paths": rows}), encoding="utf-8")
+        paths = TrackPaths(index_path=self.index, paths_path=pack)
+        self.assertIsNone(paths.error)
+        return paths
+
+    @staticmethod
+    def row(name, identifier, *, z=0, reverse=False, source=None):
+        points = [[x, z] for x in range(0, 901, 10)]
+        result = {"official_name": name, "official_id": identifier, "reverse": reverse,
+                  "path": list(reversed(points)) if reverse else points, "provenance": "capture"}
+        if source is not None:
+            result["reverse_of_id"] = source
+        return result
+
+    def test_shipped_paths_can_be_matched_without_downloading_borders(self):
+        library = self.library([("A", None), ("B", None)], {})
+        paths = self.paths(library, [self.row("A", "000001"), self.row("B", "000002", z=1000)])
+        with patch.object(circuits, "urlopen") as download:
+            matcher = TrackMatcher(library, paths=paths)
+            for index in range(7):
+                result = matcher.observe(index * 30, 0, now=index + 1)
+            download.assert_not_called()
+        self.assertEqual(matcher.available_configurations, 2)
+        self.assertEqual(result.status, "candidate")
+        self.assertEqual(result.candidate, "A")
+        self.assertEqual(result.mean_distance_m, 0)
+
+    def test_reverse_paths_always_require_manual_direction_choice(self):
+        library = self.library([("A", None), ("A inversé", None)], {})
+        paths = self.paths(library, [self.row("A", "000001"),
+                                    self.row("A inversé", "000002", reverse=True, source="000001")])
+        matcher = TrackMatcher(library, paths=paths)
+        for index in range(7):
+            result = matcher.observe(index * 30, 0, now=index + 1)
+        self.assertEqual(matcher.loaded_groups, 1)
+        self.assertEqual(matcher.available_configurations, 2)
+        self.assertEqual(result.status, "ambiguous")
+        self.assertEqual(result.candidates, ("A", "A inversé"))
+        self.assertIsNone(result.candidate)
+        self.assertIsNone(result.stable_candidate)
+
+    def test_finer_forward_borders_do_not_falsely_identify_direction(self):
+        library = self.library([("A", "tracks/a.json"), ("A inversé", None)], {"tracks/a.json": lane()})
+        paths = self.paths(library, [self.row("A", "000001", z=30),
+                                    self.row("A inversé", "000002", z=30, reverse=True, source="000001")])
+        matcher = TrackMatcher(library, paths=paths)
+        for index in range(7):
+            result = matcher.observe(index * 30, 0, now=index + 1)
+        self.assertEqual(matcher.available_configurations, 2)
+        self.assertEqual(result.status, "ambiguous")
+        self.assertEqual(result.candidates, ("A", "A inversé"))
+        self.assertIsNone(result.candidate)
+
+    def test_bad_path_pack_leaves_installed_borders_usable(self):
+        library = self.library([("A", "tracks/a.json")], {"tracks/a.json": lane()})
+        paths = TrackPaths(index_path=self.index, paths_path=self.root / "missing.json")
+        self.assertIsNotNone(paths.error)
+        matcher = TrackMatcher(library, paths=paths)
+        for index in range(7):
+            result = matcher.observe(index * 30, 0, now=index + 1)
+        self.assertEqual(result.candidate, "A")
 
     def test_one_position_never_identifies_a_circuit(self):
         library = self.library([("A", "tracks/a.json")], {"tracks/a.json": lane()})
