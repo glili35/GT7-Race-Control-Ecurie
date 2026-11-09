@@ -28,9 +28,34 @@ L'installation est demandée par un bouton et reste interdite pendant une
 capture ou une fermeture de CSV. Le fichier est vérifié une nouvelle fois
 juste avant l'ouverture de l'assistant Windows.
 
-La validation réelle du téléchargement public doit être effectuée après la
-publication par le CI. L'utilisateur doit installer 0.7 une première fois
-avant de pouvoir utiliser ce bouton pour une version ultérieure.
+Le CI a vérifié le téléchargement public de 0.7 avec le vrai client, sans
+authentification, et les démarrages des EXE portable et installé sous Windows.
+L'utilisateur doit installer 0.7 ou une version ultérieure une première fois
+avant de pouvoir utiliser ce bouton. Le passage entre deux versions par
+l'assistant sur son propre PC reste à confirmer.
+
+## Relais et états de séance — version 0.8.0 Test
+
+Les tests utilisent un vrai serveur WebSocket local, quatre clients pilotes et
+un client ingénieur. Ils vérifient l'isolation des voitures et des salles, les
+invitations, la rotation des accès, les reconnexions, les séquences retardées et
+la péremption des mesures. Les connexions et challenges seuls ne rafraîchissent
+pas la flotte. Un essai WSS refuse un certificat inconnu puis accepte une
+autorité de test explicitement reconnue, avec vérification du nom du serveur.
+
+L'essai local vérifie la capture, le chiffrement, le relais puis l'ingénieur sans
+copie directe vers la flotte distante. Les tests utilisent une capture contrôlée
+et des profils temporaires ; ils ne constituent pas un essai avec une PS5 réelle.
+L'interface Tk couvre aussi le démarrage et l'arrêt du relais, la copie et la
+rotation des invitations, ainsi que les blocages pendant une mise à jour.
+
+Les tests de séance vérifient les pauses, chargements, retours hors piste,
+ravitaillements progressifs et horodatages CSV en présence d'une écriture retardée.
+La pause conserve les mesures visibles sans apprendre de nouveaux tours ; le
+chargement et le hors-piste masquent les valeurs et les marqueurs de carte.
+
+Aucun relais public n'est déployé. L'essai **Relais local** avec la vraie PS5,
+puis la connexion entre deux domiciles, restent à effectuer avec l'équipe.
 
 ## Contrôles automatisés
 
@@ -44,8 +69,8 @@ synthétiques pour vérifier les cas ambigus et les mauvaises correspondances.
 
 ## Essais à poursuivre
 
-- Version0.7 : ouverture du panneau de mises à jour et conservation des réglages.
-- Installation d'une version ultérieure par ce mécanisme.
+- Installation de 0.8 par le mécanisme de mise à jour et conservation des réglages.
+- Essai Relais local avec la vraie PS5, incluant pause, chargement et retour piste.
 - Proposition du circuit réellement parcouru.
 - Réception depuis un autre PC, puis depuis un autre domicile.
 - Quatre PS5 et validation des pertes/reprises de signal pendant une séance.

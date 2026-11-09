@@ -6,7 +6,7 @@ from threading import RLock
 from time import monotonic
 from typing import Any
 
-from .strategy import FuelEstimate, FuelStrategy, finite_number, fuel_value, integer
+from .strategy import FuelEstimate, FuelStrategy, activity_state, finite_number, fuel_value, integer
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,7 @@ class CarSnapshot:
     measured_laps: int = 0
     strategy_status: str = "EN ATTENTE DE TOURS COMPLETS"
     has_data: bool = False
+    activity_state: str = "unknown"
 
     @property
     def current_lap(self) -> int | None:
@@ -128,8 +129,10 @@ class FleetMonitor:
             for number, state in self._cars.items():
                 age = None if state.last_seen is None else max(0.0, timestamp - state.last_seen)
                 online = age is not None and age <= self.timeout_s
-                t = state.telemetry if online else None
-                estimate = state.estimate if online else FuelEstimate()
+                activity = activity_state(state.telemetry) if online else "unknown"
+                visible = online and activity not in ("loading", "inactive")
+                t = state.telemetry if visible else None
+                estimate = state.estimate if visible else FuelEstimate()
                 tyres = getattr(t, "tyre_temperatures", None)
                 if isinstance(tyres, (list, tuple)) and len(tyres) == 4:
                     tyres = tuple(finite_number(temperature) for temperature in tyres)
@@ -147,7 +150,7 @@ class FleetMonitor:
                     lap=integer(getattr(t, "current_lap", None), maximum=32767),
                     position_x=_field(t, "position_x"),
                     position_z=_field(t, "position_z"),
-                    alerts=self._make_alerts(t, estimate) if online else (("SIGNAL PERDU",) if state.last_seen is not None else ()),
+                    alerts=self._make_alerts(t, estimate) if visible else (("SIGNAL PERDU",) if not online and state.last_seen is not None else ()),
                     rpm=_field(t, "rpm", minimum=0, maximum=30000),
                     current_gear=integer(getattr(t, "current_gear", None), maximum=15),
                     throttle_percent=_field(t, "throttle_percent", minimum=0, maximum=100),
@@ -164,5 +167,6 @@ class FleetMonitor:
                     measured_laps=estimate.measured_laps,
                     strategy_status=estimate.status,
                     has_data=state.last_seen is not None,
+                    activity_state=activity,
                 ))
             return tuple(result)

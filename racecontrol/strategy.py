@@ -37,6 +37,18 @@ def fuel_value(telemetry: Any) -> float | None:
     return finite_number(value)
 
 
+def activity_state(telemetry: Any) -> str:
+    """Interpret only the flags already exposed by the existing GT7 decoder."""
+    flags = integer(getattr(telemetry, "flags", None), maximum=65535)
+    if flags is None:
+        return "unknown"
+    if flags & (1 << 2):
+        return "loading"
+    if flags & (1 << 1):
+        return "paused"
+    return "driving" if flags & 1 else "inactive"
+
+
 @dataclass(frozen=True)
 class FuelEstimate:
     consumption_percent_per_lap: float | None = None
@@ -61,12 +73,14 @@ class FuelStrategy:
         self._lap: int | None = None
         self._lap_start: float | None = None
         self._last_fuel: float | None = None
+        self._fuel_low: float | None = None
         self._capacity: float | None = None
         self._car_id: int | None = None
         self._total_laps: int | None = None
         self._complete_start = False
         self._refuelled = False
         self._measured_laps = 0
+        self._estimate = FuelEstimate()
 
     def update(self, telemetry: Any) -> FuelEstimate:
         fuel = fuel_value(telemetry)
@@ -74,12 +88,14 @@ class FuelStrategy:
         lap = integer(getattr(telemetry, "current_lap", None), maximum=32767)
         total = integer(getattr(telemetry, "total_laps", None), maximum=32767)
         car_id = integer(getattr(telemetry, "car_id", None))
-        flags = integer(getattr(telemetry, "flags", None), maximum=65535)
-
-        # Loading marks a discontinuity. A normal pause need not discard history.
-        if flags is not None and flags & (1 << 2):
+        activity = activity_state(telemetry)
+        # A menu/loading interval cannot complete an observed driving lap.
+        # A pause freezes the previous estimate without discarding its history.
+        if activity in ("loading", "inactive"):
             self.reset()
-            return FuelEstimate()
+            return self._estimate
+        if activity == "paused":
+            return self._estimate
 
         if fuel is None or capacity is None or capacity <= 0 or not 0 <= fuel <= capacity or lap is None:
             return FuelEstimate()
@@ -98,13 +114,18 @@ class FuelStrategy:
         if total is not None:
             self._total_laps = total
 
-        # A rise over 0.1% of the tank excludes the lap and pre-refuel history.
-        # The same check precedes line-crossing handling to catch refuelling there.
-        refuelled_now = self._last_fuel is not None and fuel - self._last_fuel > capacity * 0.001
+        # Small per-packet increases can add up to a real refuel at 60 Hz.
+        # Compare with the low-water mark, never sum positive noise/oscillations.
+        if self._fuel_low is None:
+            self._fuel_low = fuel
+        refuelled_now = fuel - self._fuel_low > capacity * 0.001
         if refuelled_now:
             self._consumptions.clear()
             self._measured_laps = 0
             self._refuelled = True
+            self._fuel_low = fuel
+        else:
+            self._fuel_low = min(self._fuel_low, fuel)
 
         if self._lap is None:
             self._lap = lap
@@ -130,7 +151,8 @@ class FuelStrategy:
 
         self._last_fuel = fuel
         if not self._consumptions:
-            return FuelEstimate()
+            self._estimate = FuelEstimate()
+            return self._estimate
 
         consumption = sum(self._consumptions) / len(self._consumptions)
         fuel_percent = fuel / capacity * 100.0
@@ -147,7 +169,7 @@ class FuelStrategy:
             status = "ESTIMATION SUR TOURS COMPLETS"
         if insufficient:
             status = "CARBURANT ESTIMÉ INSUFFISANT"
-        return FuelEstimate(
+        self._estimate = FuelEstimate(
             consumption_percent_per_lap=consumption,
             remaining_laps=autonomy,
             fuel_needed_percent=needed,
@@ -155,3 +177,4 @@ class FuelStrategy:
             status=status,
             insufficient=insufficient,
         )
+        return self._estimate

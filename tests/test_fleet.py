@@ -116,6 +116,71 @@ class FleetTests(unittest.TestCase):
         fleet.reset()
         self.assertTrue(all(not car.has_data for car in fleet.snapshots(now=1)))
 
+    def test_fresh_loading_or_inactive_flux_is_connected_but_hides_car_values(self):
+        for flags, activity in ((4, "loading"), (0, "inactive")):
+            with self.subTest(activity=activity):
+                fleet = FleetMonitor()
+                fleet.ingest(1, SimpleNamespace(
+                    flags=flags, speed_kmh=216, rpm=8000, current_gear=5,
+                    fuel_level=5, fuel_capacity=100, current_lap=3, total_laps=10,
+                    position_x=10, position_z=20, throttle_percent=90,
+                    brake_percent=0, tyre_temperatures=(70, 71, 72, 73),
+                    last_lap_ms=90000, best_lap_ms=89000,
+                ), now=100)
+                car = fleet.snapshots(now=100)[0]
+                self.assertTrue(car.connected)
+                self.assertTrue(car.has_data)
+                self.assertEqual(car.activity_state, activity)
+                for field in ("speed_kmh", "rpm", "current_gear", "fuel_percent", "lap",
+                              "position_x", "position_z", "throttle_percent", "brake_percent",
+                              "tyre_temperatures", "last_lap_ms", "best_lap_ms", "remaining_laps"):
+                    self.assertIsNone(getattr(car, field), field)
+                self.assertEqual(car.alerts, ())
+
+    def test_pause_keeps_metrics_and_history_but_not_a_new_lap_estimate(self):
+        fleet = FleetMonitor()
+        for now, lap, fuel in [(0, 1, 100), (1, 2, 95), (2, 3, 90)]:
+            fleet.ingest(1, SimpleNamespace(flags=1, current_lap=lap, fuel_level=fuel,
+                                          fuel_capacity=100, speed_kmh=100), now=now)
+        previous = fleet.snapshots(now=2)[0]
+        fleet.ingest(1, SimpleNamespace(flags=3, current_lap=4, fuel_level=60,
+                                      fuel_capacity=100, speed_kmh=100), now=2.1)
+        paused = fleet.snapshots(now=2.1)[0]
+        self.assertTrue(paused.connected)
+        self.assertEqual(paused.activity_state, "paused")
+        self.assertEqual(paused.speed_kmh, 100)
+        self.assertEqual(paused.measured_laps, previous.measured_laps)
+        self.assertEqual(paused.consumption_percent_per_lap, previous.consumption_percent_per_lap)
+
+    def test_activity_compatibility_signal_loss_and_car_isolation(self):
+        fleet = FleetMonitor()
+        fleet.ingest(1, SimpleNamespace(flags=1, speed_kmh=100), now=1)
+        fleet.ingest(2, SimpleNamespace(speed_kmh=120), now=1)
+        fleet.ingest(3, SimpleNamespace(flags=0, speed_kmh=140), now=1)
+        fleet.ingest(4, SimpleNamespace(flags=4, speed_kmh=160), now=1)
+        cars = fleet.snapshots(now=1)
+        self.assertEqual([car.activity_state for car in cars], ["driving", "unknown", "inactive", "loading"])
+        self.assertEqual([car.speed_kmh for car in cars], [100, 120, None, None])
+        self.assertTrue(all(car.connected for car in cars))
+        lost = fleet.snapshots(now=5)
+        self.assertTrue(all(not car.connected for car in lost))
+        self.assertTrue(all(car.activity_state == "unknown" for car in lost))
+        self.assertTrue(all(car.alerts == ("SIGNAL PERDU",) for car in lost))
+
+    def test_gradual_refuelling_resets_only_affected_car(self):
+        fleet = FleetMonitor()
+        for now, lap, fuel in [(0, 1, 100), (1, 2, 95), (2, 3, 90)]:
+            for car in (1, 2):
+                fleet.ingest(car, SimpleNamespace(flags=1, current_lap=lap,
+                                                 fuel_level=fuel, fuel_capacity=100), now=now)
+        for step in range(1, 101):
+            fleet.ingest(1, SimpleNamespace(flags=1, current_lap=3, fuel_level=90+step*.05,
+                                           fuel_capacity=100), now=2+step*.001)
+        cars = fleet.snapshots(now=2.1)
+        self.assertEqual(cars[0].measured_laps, 0)
+        self.assertEqual(cars[1].measured_laps, 1)
+        self.assertAlmostEqual(cars[1].consumption_percent_per_lap, 5)
+
 
 if __name__ == '__main__':
     unittest.main()

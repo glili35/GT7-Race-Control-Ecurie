@@ -82,15 +82,24 @@ class GT7CSVRecorder:
         self._writer.writeheader()
         self.rows_written = 0
 
-    def record(self, telemetry):
-        """Écrit les données d'un paquet décodé."""
+    def record(self, telemetry, *, timestamp=None):
+        """Écrit un paquet, avec sa date de réception si elle est fournie.
+
+        Les appelants historiques peuvent continuer à ne fournir que le paquet.
+        Une date ISO ou un datetime permet à un writer asynchrone de conserver
+        l'instant de réception au lieu de dater le vidage de sa file.
+        """
+
+        if timestamp is None:
+            timestamp = datetime.now()
+        elif isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+        timestamp_text = timestamp.isoformat(timespec="milliseconds")
 
         tyres = telemetry.tyre_temperatures
 
         row = {
-            "timestamp": datetime.now().isoformat(
-                timespec="milliseconds"
-            ),
+            "timestamp": timestamp_text,
             "packet_format": telemetry.packet_format,
             "position_x": telemetry.position_x,
             "position_y": telemetry.position_y,

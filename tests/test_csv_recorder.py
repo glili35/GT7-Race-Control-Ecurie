@@ -26,6 +26,18 @@ def sample(speed):
 
 
 class CSVRecorderTests(unittest.TestCase):
+    def test_explicit_reception_datetime_is_preserved(self):
+        received_at = RealDateTime(2026, 11, 9, 12, 34, 56, 789000)
+        with tempfile.TemporaryDirectory() as temporary:
+            with GT7CSVRecorder(temporary) as recorder:
+                recorder.record(sample(123), timestamp=received_at)
+                recorder.record(sample(234), timestamp="2026-11-09T12:34:57.123")
+                path = recorder.file_path
+            with path.open(encoding="utf-8", newline="") as stream:
+                rows = list(csv.DictReader(stream, delimiter=";"))
+        self.assertEqual([row["timestamp"] for row in rows],
+                         ["2026-11-09T12:34:56.789", "2026-11-09T12:34:57.123"])
+
     def test_same_timestamp_creates_distinct_sessions_and_preserves_first_data(self):
         with tempfile.TemporaryDirectory() as temporary, \
              patch("racecontrol.telemetry.csv_recorder.datetime", FrozenDateTime):

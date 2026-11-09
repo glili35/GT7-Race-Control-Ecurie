@@ -1,4 +1,4 @@
-# GT7 Race Control Écurie — 0.7.0 Test
+# GT7 Race Control Écurie — 0.8.0 Test
 
 Un poste ingénieur pour réunir les télémétries de **quatre pilotes GT7**, chacun
 avec sa PlayStation et son PC Windows. La même application propose un mode
@@ -8,12 +8,12 @@ pilote, un mur des stands et une démonstration clairement identifiée.
 
 ## Télécharger et lancer sur Windows
 
-1. Télécharger [l'installateur Windows 0.7.0 Test](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/download/test-v0.7.0/GT7-Race-Control-Ecurie-Setup-0.7.0-test.exe).
-2. Fermer la version en cours, puis lancer `GT7-Race-Control-Ecurie-Setup-0.7.0-test.exe`.
+1. Depuis la version 0.7 ou ultérieure, ouvrir **Mises à jour**. Pour une première installation, télécharger [l'installateur Windows 0.8.0 Test](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/download/test-v0.8.0/GT7-Race-Control-Ecurie-Setup-0.8.0-test.exe).
+2. Fermer la version en cours, puis lancer `GT7-Race-Control-Ecurie-Setup-0.8.0-test.exe` si le téléchargement a été fait manuellement.
 3. Ouvrir **GT7 Race Control Écurie (Test)** depuis le menu Démarrer.
 
 L'installateur et l'archive portable sont disponibles dans la
-[publication Test 0.7.0](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/tag/test-v0.7.0),
+[publication Test 0.8.0](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/tag/test-v0.8.0),
 sans compte GitHub. Les artifacts de compilation restent disponibles dans Actions.
 
 Python et les bibliothèques sont inclus. L'installateur n'est pas signé.
@@ -25,9 +25,10 @@ Le bouton **Démonstration** présente quatre voitures fictives et une carte fic
 sans connexion PS5, transmission réseau ni enregistrement de session.
 Un bandeau indique ce mode en permanence.
 
-La version 0.7 met à jour le canal Test existant en conservant son profil.
+La version 0.8 met à jour le canal Test existant en conservant son profil.
 La réception PS5 et l'essai complet sur un seul PC de la version 0.6 ont été
-confirmés par l'utilisateur. La version 0.7 conserve ces fonctions.
+confirmés par l'utilisateur. La version 0.8 conserve ces fonctions et ajoute
+un relais optionnel, dont le parcours peut aussi être essayé sur un seul PC.
 
 ## Mises à jour depuis le logiciel
 
@@ -41,7 +42,7 @@ La version 0.7 apporte le bouton **Mises à jour** :
    ouvre l'assistant Windows. L'application se ferme après le lancement réussi
    de l'installateur. Terminer l'assistant pour rouvrir la nouvelle version.
 
-Il faut installer manuellement 0.7 une première fois pour obtenir ce mécanisme.
+Il faut installer manuellement 0.7 ou une version plus récente une première fois pour obtenir ce mécanisme.
 Les versions suivantes pourront être récupérées depuis ce bouton, sans passer
 par les pages GitHub. Aucun téléchargement ni lancement n'est effectué au démarrage.
 La recherche et le téléchargement s'exécutent en arrière-plan ; le téléchargement
@@ -73,23 +74,30 @@ indique séparément si le poste ingénieur reçoit les données.
 
 1. Ouvrir **Poste pilote** et renseigner l'IP de la PS5 comme pour l'essai précédent.
 2. Arrêter une éventuelle connexion ou la démonstration.
-3. Cliquer **Démarrer l'essai complet**, puis rouler dans GT7.
+3. Choisir **Direct** ou **Relais local**, puis cliquer **Démarrer l'essai complet** et rouler dans GT7.
 4. Vérifier que le statut affiche **Chaîne locale complète en direct**, puis
    retrouver la voiture dans **Poste ingénieur**.
 
 L'application ouvre une réception chiffrée accessible uniquement sur ce PC et
 crée son invitation automatiquement. Les données de la vraie PS5 traversent
-le transport HTTPS avant d'alimenter le mur des stands : l'affichage ingénieur
+le transport choisi avant d'alimenter le mur des stands : l'affichage ingénieur
 ne reçoit pas de copie directe de la capture. Aucune donnée fictive n'est injectée.
 L'invitation saisie pour l'équipe reste inchangée et les CSV gardent la fréquence
 locale complète. Le bouton **Arrêter l'essai complet** ferme les deux côtés.
+
+**Direct** vérifie le transport HTTPS existant. **Relais local** démarre un
+relais temporaire sur la boucle locale : pilote et ingénieur s'y connectent
+séparément en WebSocket, avec chiffrement de bout en bout des mesures. Le relais
+ne reçoit pas les clés. Ses accès temporaires sont supprimés à l'arrêt ; les CSV
+restent dans le dossier des sessions. Aucun hébergement distant n'est nécessaire
+pour cet essai.
 
 Cet essai vérifie la chaîne sur un seul ordinateur. Il ne valide pas l'accès
 depuis un autre domicile, le routeur ou le pare-feu d'un autre PC.
 
 ## Connecter l'ingénieur et les quatre pilotes
 
-Sur le poste ingénieur :
+En mode **Connexion directe**, sur le poste ingénieur :
 
 1. Renseigner une **adresse joignable par les pilotes** et le port, 8765 par défaut.
 2. Cliquer **Ouvrir la réception**.
@@ -106,7 +114,7 @@ l'invitation ; le sélecteur de voiture ne concerne que l'aperçu local.
 Le bouton **Vérifier l'invitation** contrôle l'adresse, le certificat et l'accès
 avant même le roulage. Il distingue invitation invalide/révoquée, certificat
 différent et ingénieur injoignable, sans créer de fausse voiture connectée.
-Les deux postes doivent utiliser 0.6 pour cette vérification ; le transport
+Les deux postes doivent utiliser 0.6 ou ultérieure pour cette vérification ; le transport
 de télémétrie existant reste compatible avec 0.5.
 
 **Depuis plusieurs domiciles**, l'adresse de l'ingénieur doit être accessible
@@ -117,7 +125,27 @@ Avec un accès Internet sous CGNAT, il faut un relais hébergé ou un réseau pr
 configuré séparément. Cette version ne provisionne aucun relais ni abonnement
 et ne modifie pas le routeur automatiquement.
 
-Les quatre flux voyagent en HTTPS. L'invitation contient l'empreinte du certificat
+### Utiliser un relais hébergé
+
+Cette option permet aux deux côtés d'établir une connexion sortante ; le PC
+ingénieur n'a alors pas besoin d'une redirection de port entrant. Elle exige
+un relais effectivement déployé et une adresse WSS avec certificat reconnu.
+La version 0.8 fournit le serveur et les clients, sans hébergement préconfiguré.
+Voir [la configuration du serveur](docs/RELAIS.md).
+
+1. Dans **Poste ingénieur**, choisir **Relais hébergé**.
+2. Renseigner son adresse et le code d'accès ingénieur fourni par l'administrateur,
+   puis **Connecter le relais**. Le profil local conserve ensuite l'accès à sa salle.
+3. Copier une invitation distincte pour chacune des quatre voitures.
+4. Chaque pilote colle son invitation et connecte sa propre PS5 comme en mode direct.
+
+Les deux postes doivent utiliser 0.8 ou ultérieure pour le relais. Les mesures
+sont chiffrées de bout en bout avec une clé différente par voiture ; le relais
+ne conserve que les accès et ne stocke pas d'historique de télémétrie.
+**Renouveler l'accès** révoque l'invitation de la voiture choisie et crée une
+nouvelle clé. Le bouton de vérification contrôle l'accès sans envoyer de mesure.
+
+En mode direct, les quatre flux voyagent en HTTPS. L'invitation contient l'empreinte du certificat
 de l'ingénieur, vérifiée avant l'envoi du jeton d'accès. Les invitations et les
 clés restent dans le profil local : ne pas les publier dans un ticket GitHub.
 
@@ -134,6 +162,11 @@ clés restent dans le profil local : ne pas les publier dans un ticket GitHub.
 - Réception locale et CSV à la fréquence des paquets, environ 60 Hz selon GT7.
   Transmission à l'ingénieur plafonnée à 10 Hz, sans bloquer la capture locale.
 - Détection de perte de signal et masquage des mesures périmées.
+- États distincts pour le roulage, la pause, le chargement et le retour hors piste.
+  Chargement et hors piste masquent les mesures et les positions ; la pause
+  suspend l'apprentissage de consommation. Le statut de connexion reste séparé.
+- Prise en compte des ravitaillements progressifs et horodatage CSV à la réception,
+  même lorsque l'écriture disque est retardée.
 - Catalogue embarqué de 122 configurations, dont 27 avec données de bordures
   dans ce catalogue ; bouton **Tous les tracés (27)** pour les installer ensemble.
   Les caches valides sont conservés et chaque échec est signalé séparément.
@@ -213,7 +246,8 @@ testé puis utilise le vrai client, sans authentification, pour télécharger et
 vérifier l'installateur public. Il n'exécute pas cet installateur une deuxième fois.
 
 Pour publier une évolution, augmenter le numéro de version et les noms de fichiers
-dans le packaging avant de pousser la branche de test. Une version déjà publiée
+dans le packaging, faire valider la branche puis l'intégrer à `main`. La publication
+est réservée aux poussées sur `main` après les contrôles. Une version déjà publiée
 n'est jamais écrasée : son tag et ses fichiers doivent rester identiques.
 
 Source du catalogue :

@@ -21,6 +21,8 @@ from racecontrol.transport import EngineerHub, check_invitation
 from racecontrol.local_trial import LocalTrial
 from racecontrol.track_matcher import TrackMatcher
 from racecontrol.update_ui import UpdatePanel
+from racecontrol.relay_client import RelayEngineerSession, check_relay_invitation
+from racecontrol.relay_trial import RelayLocalTrial
 
 BG = "#0c1420"
 PANEL = "#152233"
@@ -126,18 +128,23 @@ class CarCard(tk.Frame):
     def update_data(self, snapshot, name):
         s = snapshot
         self.name.config(text=name[:22])
-        status = "EN DIRECT" if s.connected else ("SIGNAL PERDU" if s.has_data else "EN ATTENTE")
-        self.status.config(text=status, fg="#34d399" if s.connected else ("#fb7185" if s.has_data else MUTED))
+        activity = getattr(s, "activity_state", "unknown")
+        live_state = {"paused": "EN PAUSE", "loading": "CHARGEMENT", "inactive": "HORS PISTE"}.get(activity, "EN DIRECT")
+        status = live_state if s.connected else ("SIGNAL PERDU" if s.has_data else "EN ATTENTE")
+        color = ("#34d399" if activity in ("driving", "unknown") else "#fbbf24") if s.connected else ("#fb7185" if s.has_data else MUTED)
+        self.status.config(text=status, fg=color)
         self.speed.config(text=number(s.speed_kmh))
         gear = "R" if s.current_gear == 0 else number(s.current_gear)
         self.gear.config(text=f"RAPPORT {gear}")
-        self.race.config(text=f"TOUR {number(s.lap)} / {number(s.total_laps) if s.total_laps else 'LIBRE'}"
+        self.race.config(text=f"TOUR {number(s.lap)} / {'LIBRE' if s.total_laps == 0 else number(s.total_laps)}"
                               f"   ·   POSITION {number(s.race_position)}")
         self.values["fuel"].config(text=number(s.fuel_percent, 1, " %"))
         self.values["consumption"].config(text=number(s.consumption_percent_per_lap, 2, " %"))
         self.values["range"].config(text=number(s.remaining_laps, 1, " tours"))
         self.times.config(text=f"DERNIER {lap_time(s.last_lap_ms)}   ·   MEILLEUR {lap_time(s.best_lap_ms)}")
         alert = " · ".join(s.alerts) if s.alerts else s.strategy_status
+        if s.connected and activity in ("loading", "inactive"):
+            alert = "Chargement en cours" if activity == "loading" else "En attente du retour sur la piste"
         self.alert.config(text=alert, fg="#fbbf24" if s.alerts else MUTED)
         self.pedals.delete("all")
         width = max(80, self.pedals.winfo_width() - 44)
@@ -176,6 +183,7 @@ class RaceControlApp:
         self.hub = None
         self.pilot = None
         self.local_trial = None
+        self.relay_engineer = None
         self._bulk_cancel = threading.Event()
         self.matcher = None
         self._match_car = None
@@ -204,6 +212,14 @@ class RaceControlApp:
         self.circuit = tk.StringVar(value=self.settings.get("circuit", ""))
         self.host = tk.StringVar(value=self.settings.get("host", local_address()))
         self.port = tk.StringVar(value=str(self.settings.get("port", 8765)))
+        mode = self.settings.get("connection_mode", "Connexion directe")
+        if mode not in ("Connexion directe", "Relais hébergé"):
+            mode = "Connexion directe"
+        self.connection_mode = tk.StringVar(value=mode)
+        self._previous_mode = mode
+        self.relay_url = tk.StringVar(value=str(self.settings.get("relay_url", "")))
+        self.relay_access = tk.StringVar(value=str(self.settings.get("relay_access", "")))
+        self.trial_transport = tk.StringVar(value="Direct")
         self.slot = tk.StringVar(value="1")
         self.ps5_ip = tk.StringVar(value=self.settings.get("ps5_ip", ""))
         self.invitation = tk.StringVar(value=self.settings.get("invitation", ""))
@@ -225,7 +241,7 @@ class RaceControlApp:
         self.suggested = tk.StringVar(value="")
         self.connection_status = tk.StringVar(value="Invitation non vérifiée")
         self.trial_status = tk.StringVar(value="Un seul PC suffit pour vérifier la chaîne avec ta PS5.")
-        self.summary = tk.StringVar(value="0 / 4 voitures en direct")
+        self.summary = tk.StringVar(value="0 / 4 voitures connectées")
         self._build()
         if self.circuit.get() in self.library.entrees:
             self.select_circuit()
@@ -283,7 +299,15 @@ class RaceControlApp:
                  font=(FONT, 9)).pack(side="right")
 
     def _engineer_controls(self, parent):
+        self.mode_controls = ttk.Frame(parent)
+        self.mode_controls.pack(fill="x", pady=(0, 7))
+        ttk.Label(self.mode_controls, text="Connexion de l'équipe").pack(side="left")
+        modes = ttk.Combobox(self.mode_controls, textvariable=self.connection_mode,
+                            values=("Connexion directe", "Relais hébergé"), width=21, state="readonly")
+        modes.pack(side="left", padx=9)
+        modes.bind("<<ComboboxSelected>>", lambda _: self.change_connection_mode())
         row = ttk.Frame(parent)
+        self.direct_controls = row
         row.pack(fill="x", pady=(0, 8))
         ttk.Label(row, text="Adresse joignable par les pilotes").pack(side="left")
         ttk.Entry(row, textvariable=self.host, width=24).pack(side="left", padx=7)
@@ -292,6 +316,13 @@ class RaceControlApp:
         self.hub_button = ttk.Button(row, text="Ouvrir la réception", command=self.toggle_hub)
         self.hub_button.pack(side="left", padx=7)
         ttk.Label(row, textvariable=self.hub_status).pack(side="left", padx=8)
+        self.relay_controls = ttk.Frame(parent)
+        ttk.Label(self.relay_controls, text="Adresse du relais").pack(side="left")
+        ttk.Entry(self.relay_controls, textvariable=self.relay_url, width=40).pack(side="left", padx=7)
+        ttk.Label(self.relay_controls, text="Code d'accès ingénieur").pack(side="left")
+        ttk.Entry(self.relay_controls, textvariable=self.relay_access, width=25, show="•").pack(side="left", padx=7)
+        self.relay_button = ttk.Button(self.relay_controls, text="Connecter le relais", command=self.toggle_hub)
+        self.relay_button.pack(side="left", padx=7)
         invites = ttk.Frame(parent)
         invites.pack(fill="x", pady=(0, 9))
         ttk.Label(invites, text="Invitation pour la voiture").pack(side="left")
@@ -299,8 +330,9 @@ class RaceControlApp:
                      state="readonly").pack(side="left", padx=7)
         ttk.Button(invites, text="Copier l'invitation", command=self.copy_invitation).pack(side="left")
         ttk.Button(invites, text="Renouveler l'accès", command=self.rotate_invitation).pack(side="left", padx=7)
-        ttk.Label(invites, text="À distance : cette adresse et ce port doivent être accessibles depuis Internet.",
-                  foreground=MUTED).pack(side="left", padx=5)
+        self.network_hint = ttk.Label(invites, text="", foreground=MUTED)
+        self.network_hint.pack(side="left", padx=5)
+        self.change_connection_mode(initial=True)
         circuit_row = ttk.Frame(parent)
         circuit_row.pack(fill="x", pady=(0, 8))
         ttk.Label(circuit_row, text="Circuit").pack(side="left")
@@ -383,6 +415,11 @@ class RaceControlApp:
         ttk.Label(parent, text="ESSAI COMPLET SUR UN SEUL PC", font=(FONT, 13, "bold")).pack(anchor="w", pady=6)
         ttk.Label(parent, text="Ta PS5 fournit les données. Elles traversent la liaison chiffrée avant d'arriver au mur des stands.",
                   foreground=MUTED, wraplength=950).pack(anchor="w", pady=5)
+        trial_options = ttk.Frame(parent)
+        trial_options.pack(fill="x", pady=5)
+        ttk.Label(trial_options, text="Chemin à vérifier").pack(side="left")
+        ttk.Combobox(trial_options, textvariable=self.trial_transport, values=("Direct", "Relais local"),
+                     width=18, state="readonly").pack(side="left", padx=12)
         self.trial_button = ttk.Button(parent, text="Démarrer l'essai complet", command=self.toggle_local_trial)
         self.trial_button.pack(anchor="w", pady=7)
         ttk.Label(parent, textvariable=self.trial_status, foreground=COLORS[0]).pack(anchor="w", pady=5)
@@ -445,7 +482,14 @@ class RaceControlApp:
             except Exception as exc:
                 self.post("catalog_failure" if catalog else "failure", str(exc))
 
-        threading.Thread(target=run, name="GT7-Action", daemon=True).start()
+        try:
+            threading.Thread(target=run, name="GT7-Action", daemon=True).start()
+        except RuntimeError:
+            if catalog:
+                self.catalog_busy = False
+            else:
+                self.busy = False
+            self.post("catalog_failure" if catalog else "failure", "Impossible de démarrer l'action. Réessaie après avoir fermé les connexions inutilisées.")
 
     def toggle_hub(self):
         if self.busy:
@@ -455,6 +499,12 @@ class RaceControlApp:
             return
         if self.demo or (self.pilot and self.pilot.running):
             messagebox.showinfo("Réception", "Arrête la démonstration ou la connexion pilote avant d'ouvrir la réception.", parent=self.root)
+            return
+        if self.relay_engineer is not None:
+            self.work(self.relay_engineer.stop, lambda _: self._relay_stopped())
+            return
+        if self.connection_mode.get() == "Relais hébergé":
+            self.start_relay_engineer()
             return
         if self.hub:
             hub = self.hub
@@ -489,15 +539,72 @@ class RaceControlApp:
         self.hub_button.config(text="Ouvrir la réception")
         self.hub_status.set("Réception fermée")
 
+    def change_connection_mode(self, initial=False):
+        if not initial and (self.busy or self.hub or self.relay_engineer or (self.pilot and self.pilot.running)):
+            self.connection_mode.set(self._previous_mode)
+            messagebox.showinfo("Connexion", "Arrête la connexion en cours avant de changer de mode.", parent=self.root)
+            return
+        self._previous_mode = self.connection_mode.get()
+        if self.connection_mode.get() == "Relais hébergé":
+            self.direct_controls.pack_forget()
+            self.relay_controls.pack(after=self.mode_controls, fill="x", pady=(0, 8))
+            self.network_hint.config(text="Relais à configurer · chaque poste s'y connecte depuis l'application.")
+        else:
+            self.relay_controls.pack_forget()
+            self.direct_controls.pack(after=self.mode_controls, fill="x", pady=(0, 8))
+            self.network_hint.config(text="À distance : cette adresse et ce port doivent être accessibles depuis Internet.")
+
+    def relay_message(self, text):
+        self.log(text)
+        self.post("relay_message", text)
+
+    def start_relay_engineer(self):
+        url, access = self.relay_url.get().strip(), self.relay_access.get().strip()
+        if not url:
+            messagebox.showinfo("Relais", "Renseigne l'adresse du relais de l'équipe. Pour un essai sur ce PC, utilise Relais local dans Poste pilote.", parent=self.root)
+            return
+        self.fleet.reset()
+        fleet = self.fleet
+        self.hub_status.set("Connexion au relais…")
+
+        def start():
+            session = RelayEngineerSession(url, access, self.data_dir / "relais", fleet, on_status=self.relay_message)
+            try:
+                session.start()
+                if not session.wait_ready(timeout=6):
+                    raise RuntimeError("Connexion au relais impossible. Vérifie l'adresse et le code d'accès dans Diagnostic.")
+                return session
+            except Exception:
+                session.stop()
+                raise
+
+        def started(session):
+            self.relay_engineer = session
+            self.relay_button.config(text="Déconnecter le relais")
+            self.hub_status.set("Relais connecté · invitations prêtes")
+            self.network_hint.config(text="Relais connecté · copie une invitation distincte pour chaque voiture.")
+            self.save_settings(quiet=True)
+
+        self.work(start, started)
+
+    def _relay_stopped(self):
+        self.relay_engineer = None
+        self.relay_button.config(text="Connecter le relais")
+        self.fleet.reset()
+        self.hub_status.set("Relais déconnecté")
+        self.network_hint.config(text="Relais déconnecté")
+
     def copy_invitation(self):
         if self.local_trial:
             messagebox.showinfo("Essai local", "L'invitation de cet essai reste sur ce PC. Arrête l'essai pour préparer les invitations de l'équipe.", parent=self.root)
             return
-        if not self.hub:
+        source = self.relay_engineer or self.hub
+        if not source:
             messagebox.showinfo("Invitation", "Ouvre d'abord la réception ingénieur.", parent=self.root)
             return
         try:
-            invite = self.hub.invitation(int(self.slot.get()), self.host.get().strip())
+            invite = (self.relay_engineer.invitation(int(self.slot.get())) if self.relay_engineer
+                      else self.hub.invitation(int(self.slot.get()), self.host.get().strip()))
             self.root.clipboard_clear()
             self.root.clipboard_append(invite)
             self.hub_status.set(f"Invitation voiture {self.slot.get()} copiée")
@@ -505,8 +612,20 @@ class RaceControlApp:
             messagebox.showerror("Invitation", str(exc), parent=self.root)
 
     def rotate_invitation(self):
+        if self.busy:
+            return
         if self.local_trial:
             messagebox.showinfo("Essai local", "L'accès de l'essai local est géré automatiquement. Arrête l'essai pour gérer les invitations de l'équipe.", parent=self.root)
+            return
+        if self.relay_engineer:
+            car = int(self.slot.get())
+
+            def rotated(invite):
+                self.root.clipboard_clear()
+                self.root.clipboard_append(invite)
+                self.network_hint.config(text=f"Nouvelle invitation voiture {car} copiée · l'ancienne est révoquée.")
+
+            self.work(lambda: self.relay_engineer.rotate_token(car), rotated)
             return
         if not self.hub:
             return
@@ -520,7 +639,7 @@ class RaceControlApp:
         if self.local_trial:
             self.toggle_local_trial()
             return
-        if self.demo or self.hub:
+        if self.demo or self.hub or self.relay_engineer:
             messagebox.showinfo("Poste pilote", "Arrête la démonstration ou ferme la réception ingénieur avant de connecter une PS5.", parent=self.root)
             return
         if self.pilot and self.pilot.running:
@@ -579,7 +698,8 @@ class RaceControlApp:
             self.connection_status.set(result.message)
             self.log("Vérification de l'invitation : " + result.message)
 
-        self.work(lambda: check_invitation(invitation), checked)
+        checker = check_relay_invitation if invitation.startswith("gt7relay://") else check_invitation
+        self.work(lambda: checker(invitation), checked)
 
     def toggle_local_trial(self):
         if self.busy:
@@ -596,11 +716,12 @@ class RaceControlApp:
                 self._pilot_stopped()
                 self.banner.pack_forget()
                 self.trial_button.config(text="Démarrer l'essai complet")
+                self.relay_button.config(text="Connecter le relais")
                 self.trial_status.set("Essai arrêté · les sessions CSV ont été fermées.")
 
             self.work(trial.stop, stopped)
             return
-        if self.demo or self.hub or (self.pilot and self.pilot.running):
+        if self.demo or self.hub or self.relay_engineer or (self.pilot and self.pilot.running):
             messagebox.showinfo("Essai complet", "Arrête les connexions ou la démonstration avant de commencer l'essai complet.", parent=self.root)
             return
         self.remember_recording(self.pilot)
@@ -611,11 +732,13 @@ class RaceControlApp:
             return
         self.fleet = FleetMonitor()
         fleet, car, record = self.fleet, int(self.local_car.get()), self.record.get()
+        relay_trial = self.trial_transport.get() == "Relais local"
         self.reset_recognition_history()
         self.trial_status.set("Ouverture de la capture et de la liaison chiffrée…")
 
         def start():
-            trial = LocalTrial(fleet, self.data_dir, car_number=car, on_status=self.pilot_message)
+            factory = RelayLocalTrial if relay_trial else LocalTrial
+            trial = factory(fleet, self.data_dir, car_number=car, on_status=self.pilot_message)
             trial.start(ip, record=record)
             return trial
 
@@ -625,17 +748,19 @@ class RaceControlApp:
             self.trial_button.config(text="Arrêter l'essai complet")
             self.pilot_button.config(text="Arrêter l'essai complet")
             self.hub_button.config(text="Arrêter l'essai complet")
+            self.relay_button.config(text="Arrêter l'essai complet")
             self.hub_status.set("Essai sur ce PC · réception locale chiffrée")
             self.pilot_status.set("À l'écoute de ta PS5")
             self.trial_status.set("Lance le roulage : le mur des stands attend les données reçues par la liaison chiffrée.")
-            self.banner.config(text="ESSAI LOCAL · VRAIE PS5 · TRANSMISSION CHIFFRÉE SUR CE PC")
+            self.banner.config(text=("ESSAI RELAIS LOCAL · VRAIE PS5 · AUCUN HÉBERGEMENT DISTANT" if relay_trial
+                                     else "ESSAI LOCAL · VRAIE PS5 · TRANSMISSION CHIFFRÉE SUR CE PC"))
             self.banner.pack(before=self.tabs, fill="x", padx=16, pady=(0, 8))
             self.save_settings(quiet=True)
 
         self.work(start, started)
 
     def toggle_demo(self):
-        if self.busy or self.hub or (self.pilot and self.pilot.running):
+        if self.busy or self.hub or self.relay_engineer or (self.pilot and self.pilot.running):
             messagebox.showinfo("Démonstration", "Arrête les connexions en cours avant de changer de mode.", parent=self.root)
             return
         self.demo = not self.demo
@@ -752,7 +877,8 @@ class RaceControlApp:
     def update_recognition(self, cars):
         if self.demo or not self.recognition.get() or self.matcher is None:
             return
-        source = next((s for s in cars if s.connected and s.position_x is not None and s.position_z is not None), None)
+        source = next((s for s in cars if s.connected and getattr(s, "activity_state", "unknown") in ("driving", "unknown")
+                       and s.position_x is not None and s.position_z is not None), None)
         if source is None:
             if self._match_car is not None:
                 self.reset_recognition_history()
@@ -903,8 +1029,13 @@ class RaceControlApp:
             elif kind == "pilot_message":
                 if value.startswith(("Télémétrie transmise", "Ingénieur injoignable", "Invitation refusée",
                                      "Certificat ingénieur", "Transmission arrêtée", "En attente des données",
-                                     "En attente de données", "Mesure PS5 invalide")):
+                                     "En attente de données", "Mesure PS5 invalide", "Relais", "Transmission via relais",
+                                     "Télémétrie chiffrée transmise", "Invitation relais refusée",
+                                     "Emplacement relais indisponible", "Transmission relais arrêtée")):
                     self.link_status.set(value)
+            elif kind == "relay_message":
+                self.hub_status.set(value)
+                self.network_hint.config(text=value)
             elif kind == "circuit_progress":
                 self.circuit_status.set(value)
             elif kind == "log":
@@ -925,7 +1056,7 @@ class RaceControlApp:
         self.draw_cars(cars)
         self.update_recognition(cars)
         connected = sum(s.connected for s in cars)
-        self.summary.set(f"{connected} / 4 voitures {'simulées' if self.demo else 'en direct'}")
+        self.summary.set(f"{connected} / 4 voitures {'simulées' if self.demo else 'connectées'}")
         if self.pilot and self.pilot.running:
             d = self.pilot.diagnostics.snapshot()
             errors = d.packet_format_errors + d.decryption_errors + d.decode_errors
@@ -938,11 +1069,15 @@ class RaceControlApp:
             local_fleet = getattr(self.pilot, "fleet", self.fleet)
             local = local_fleet.snapshots()[self.pilot.car_number - 1]
             if local.has_data:
-                self.pilot_status.set("PS5 en direct" if local.connected else "Signal PS5 interrompu · reconnexion en attente")
+                activity = getattr(local, "activity_state", "unknown")
+                game_state = {"paused": "PS5 connectée · jeu en pause", "loading": "PS5 connectée · chargement",
+                              "inactive": "PS5 connectée · hors piste"}.get(activity, "PS5 en direct")
+                self.pilot_status.set(game_state if local.connected else "Signal PS5 interrompu · reconnexion en attente")
             if self.local_trial:
                 remote = cars[self.pilot.car_number - 1]
                 if local.connected and remote.connected:
-                    self.trial_status.set("Chaîne locale complète en direct : PS5 → capture → liaison chiffrée → ingénieur")
+                    path = "relais local" if isinstance(self.local_trial, RelayLocalTrial) else "liaison chiffrée"
+                    self.trial_status.set(f"Chaîne locale complète en direct : PS5 → capture → {path} → ingénieur")
                 elif local.connected:
                     self.trial_status.set("PS5 reçue · en attente de la transmission chiffrée")
                 elif local.has_data:
@@ -952,6 +1087,8 @@ class RaceControlApp:
     def save_settings(self, quiet=False):
         config = {"ps5_ip": self.ps5_ip.get().strip(), "host": self.host.get().strip(),
                   "port": self.port.get(), "circuit": self.circuit.get(),
+                  "connection_mode": self.connection_mode.get(), "relay_url": self.relay_url.get().strip(),
+                  "relay_access": self.relay_access.get().strip(),
                   "rotation": self.rotation.get(), "local_car": self.local_car.get(),
                   "mirror_horizontal": self.mirror_horizontal.get(),
                   "show_corners": self.show_corners.get(),
@@ -991,7 +1128,7 @@ class RaceControlApp:
             return "L'application est en cours de fermeture."
         if self.busy or self.catalog_busy:
             return "Attends la fin de l'action en cours avant l'installation."
-        if self.hub is not None or self.local_trial is not None or (self.pilot and self.pilot.running):
+        if self.hub is not None or self.relay_engineer is not None or self.local_trial is not None or (self.pilot and self.pilot.running):
             return "Arrête la capture et ferme la réception ingénieur avant d'installer la mise à jour."
         self._retired_pilots = [p for p in self._retired_pilots if getattr(p, "recording_active", False)]
         if getattr(self.pilot, "recording_active", False) or self._retired_pilots:
@@ -1005,7 +1142,7 @@ class RaceControlApp:
         return None
 
     def open_legacy(self):
-        if self._closing or (self.updates and self.updates.installing) or self.busy or self.catalog_busy or self.hub or self.demo or (self.pilot and self.pilot.running):
+        if self._closing or (self.updates and self.updates.installing) or self.busy or self.catalog_busy or self.hub or self.relay_engineer or self.demo or (self.pilot and self.pilot.running):
             messagebox.showinfo("Interface historique", "Arrête les connexions et la démonstration avant d'ouvrir l'ancienne interface.", parent=self.root)
             return
         from race_control_live_V4_INTERFACE import RaceControlLive
@@ -1051,6 +1188,8 @@ class RaceControlApp:
                 finally:
                     if self.hub:
                         self.hub.stop()
+                    if self.relay_engineer:
+                        self.relay_engineer.stop()
         finally:
             self.root.destroy()
 

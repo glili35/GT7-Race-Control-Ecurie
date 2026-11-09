@@ -23,7 +23,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPOSITORY = "glili35/GT7-Race-Control-Ecurie"
-PUBLISH_BRANCH = "refs/heads/codex/race-control-0.5"
+PUBLISH_BRANCH = "refs/heads/main"
 API_ROOT = f"https://api.github.com/repos/{REPOSITORY}"
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 VERSION_PATTERN = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
@@ -294,7 +294,7 @@ def main():
     parser.add_argument("--target-sha", required=True)
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--verify-public", action="store_true")
-    parser.add_argument("--previous-version", default="0.6.0")
+    parser.add_argument("--previous-version", default="0.7.0")
     args = parser.parse_args()
     try:
         if not VERSION_PATTERN.fullmatch(args.version) or not SHA_PATTERN.fullmatch(args.target_sha):

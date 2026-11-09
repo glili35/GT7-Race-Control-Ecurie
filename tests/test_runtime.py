@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from datetime import datetime as RealDateTime, timedelta
 import sys
 import tempfile
 import threading
@@ -153,7 +154,7 @@ class RuntimeTests(unittest.TestCase):
     def test_disk_write_error_is_visible_and_does_not_stop_capture(self):
         failed = threading.Event()
 
-        def fail_write(*args):
+        def fail_write(*args, **kwargs):
             failed.set()
             raise OSError("Disque plein")
 
@@ -187,10 +188,10 @@ class RuntimeTests(unittest.TestCase):
         release = threading.Event()
         real_record = __import__("racecontrol.runtime", fromlist=["GT7CSVRecorder"]).GT7CSVRecorder.record
 
-        def slow_record(recorder, telemetry):
+        def slow_record(recorder, telemetry, **kwargs):
             entered.set()
             release.wait(2)
-            real_record(recorder, telemetry)
+            real_record(recorder, telemetry, **kwargs)
 
         self.session.RECORD_QUEUE_SIZE = 1
         with patch("racecontrol.runtime.GT7CSVRecorder.record", new=slow_record):
@@ -214,10 +215,10 @@ class RuntimeTests(unittest.TestCase):
         release = threading.Event()
         real_record = __import__("racecontrol.runtime", fromlist=["GT7CSVRecorder"]).GT7CSVRecorder.record
 
-        def blocked_record(recorder, telemetry):
+        def blocked_record(recorder, telemetry, **kwargs):
             entered.set()
             release.wait(2)
-            real_record(recorder, telemetry)
+            real_record(recorder, telemetry, **kwargs)
 
         self.session.WRITER_STOP_TIMEOUT = 0.01
         with patch("racecontrol.runtime.GT7CSVRecorder.record", new=blocked_record):
@@ -246,6 +247,61 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(FakeReceiver.instances[-1].kwargs["ps5_ip"])
         self.session._emit("statut")
         self.session.stop()
+
+    def test_csv_keeps_reception_times_when_disk_writer_is_delayed(self):
+        entered, release = threading.Event(), threading.Event()
+        real_record = __import__("racecontrol.runtime", fromlist=["GT7CSVRecorder"]).GT7CSVRecorder.record
+
+        class Clock:
+            elapsed = 0
+
+            @classmethod
+            def now(cls):
+                return RealDateTime(2026, 11, 9, 12) + timedelta(seconds=cls.elapsed)
+
+        def blocked_record(recorder, telemetry, **kwargs):
+            entered.set()
+            release.wait(2)
+            real_record(recorder, telemetry, **kwargs)
+
+        with patch("racecontrol.runtime.datetime", Clock), \
+             patch("racecontrol.runtime.GT7CSVRecorder.record", new=blocked_record):
+            try:
+                self.session.start("192.168.0.44")
+                receiver = FakeReceiver.instances[-1]
+                receiver.emit(sample(100))
+                self.assertTrue(entered.wait(1))
+                Clock.elapsed = 1
+                receiver.emit(sample(110))
+                Clock.elapsed = 2
+                receiver.emit(sample(120))
+                Clock.elapsed = 10
+                release.set()
+                self.session.stop()
+            finally:
+                release.set()
+                self.session.stop()
+        with self.session.file_path.open(encoding="utf-8", newline="") as stream:
+            rows = list(csv.DictReader(stream, delimiter=";"))
+        self.assertEqual([row["timestamp"] for row in rows], [
+            "2026-11-09T12:00:00.000", "2026-11-09T12:00:01.000", "2026-11-09T12:00:02.000",
+        ])
+
+    def test_relay_invitation_selects_relay_link(self):
+        relay_calls = []
+
+        class RelayLink(FakeLink):
+            def __init__(self, invitation, on_status=None):
+                relay_calls.append(invitation)
+                super().__init__(invitation, on_status=on_status)
+
+        with patch.dict(sys.modules, {"racecontrol.relay_client": SimpleNamespace(RelayPilotLink=RelayLink)}):
+            self.session.start("192.168.0.44", invitation="gt7relay://invitation-test", record=False)
+            FakeReceiver.instances[-1].emit(sample())
+            self.session.stop()
+        self.assertEqual(relay_calls, ["gt7relay://invitation-test"])
+        self.assertEqual(len(FakeLink.instances[-1].items), 1)
+        self.assertTrue(FakeLink.instances[-1].stopped)
 
     def test_invalid_car_number_rejected(self):
         for number in (0, 5, True):

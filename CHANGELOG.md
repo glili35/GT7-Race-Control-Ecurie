@@ -1,5 +1,20 @@
 # Historique
 
+## 0.8.0 Test
+
+- Ajoute un relais optionnel : pilote et ingénieur ouvrent chacun une connexion
+  sortante, avec mesures chiffrées de bout en bout et accès distincts par voiture.
+- Permet de vérifier ce parcours sur un seul PC avec la vraie PS5 en choisissant
+  **Relais local** dans l'essai complet. Aucun hébergement n'est fourni automatiquement.
+- Gère les reconnexions, les invitations révoquées et les mesures expirées sans
+  présenter un simple maintien de connexion comme une nouvelle donnée PS5.
+- Distingue pause, chargement et hors piste dans le mur des stands ; masque les
+  mesures hors piste et suspend l'apprentissage de consommation pendant la pause.
+- Détecte aussi les ravitaillements progressifs et date chaque ligne CSV à la
+  réception du paquet plutôt qu'à son écriture sur disque.
+- Conserve le profil du canal Test et peut être installée depuis le bouton
+  **Mises à jour** de la version 0.7.
+
 ## 0.7.0 Test
 
 - Ajoute les mises à jour depuis le logiciel : recherche, présentation de la

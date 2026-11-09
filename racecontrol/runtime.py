@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -137,10 +138,15 @@ class PilotSession:
                 if reset is not None:
                     reset(self.car_number)
                 if invitation:
-                    from .transport import PilotLink
-
                     try:
-                        self._link = PilotLink(invitation, on_status=self._emit)
+                        if invitation.startswith("gt7relay://"):
+                            from .relay_client import RelayPilotLink
+
+                            self._link = RelayPilotLink(invitation, on_status=self._emit)
+                        else:
+                            from .transport import PilotLink
+
+                            self._link = PilotLink(invitation, on_status=self._emit)
                     except Exception:
                         raise ValueError("L'invitation du poste ingénieur est invalide.") from None
                     self._link.start()
@@ -172,6 +178,7 @@ class PilotSession:
     def _on_telemetry(self, telemetry: Any, generation: int) -> None:
         if not self._accepting.is_set() or generation != self._generation:
             return
+        received_at = datetime.now()
         # Le décodeur fournit une dataclass immuable. On conserve sa référence
         # sans copie coûteuse et sans envoyer le CSV à travers Internet.
         try:
@@ -185,7 +192,7 @@ class PilotSession:
         items = self._queue
         if items is not None and self.recording_error is None:
             try:
-                items.put_nowait(telemetry)
+                items.put_nowait((telemetry, received_at))
             except queue.Full:
                 with self._stats_lock:
                     self._rows_dropped += 1
@@ -202,11 +209,11 @@ class PilotSession:
         try:
             while not stop_event.is_set() or not items.empty():
                 try:
-                    telemetry = items.get(timeout=0.05)
+                    telemetry, received_at = items.get(timeout=0.05)
                 except queue.Empty:
                     continue
                 try:
-                    recorder.record(telemetry)
+                    recorder.record(telemetry, timestamp=received_at)
                     with self._stats_lock:
                         self._rows_written = recorder.rows_written
                 finally:
