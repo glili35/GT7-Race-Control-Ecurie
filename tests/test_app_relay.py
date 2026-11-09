@@ -141,13 +141,27 @@ class AppRelayTests(unittest.TestCase):
         return pilot
 
     def prepare_visible_map(self):
+        self.root.geometry("1280x900")
         self.root.deiconify()
         self.app.points = [(100.0, 430.0, "L"), (150.0, 430.0, "R"),
                            (100.0, 480.0, "L"), (150.0, 480.0, "R")]
-        self.root.update_idletasks()
+        # Windows livre le Configure initial après les tâches inactives : il
+        # faut traiter les événements de fenêtre et attendre un canevas réalisé,
+        # plutôt que dessiner alors qu'il mesure encore 1 × 1 pixel.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            self.root.update()
+            if (self.app.canvas.winfo_ismapped()
+                    and self.app.canvas.winfo_width() > 20
+                    and self.app.canvas.winfo_height() > 20):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("Le canevas de carte n'a pas été réalisé dans le délai prévu")
         self.app.draw_track()
         self.assertIsNotNone(self.app.transform)
         self.assertGreater(self.app.canvas.winfo_width(), 20)
+        self.assertGreater(self.app.canvas.winfo_height(), 20)
 
     def test_default_is_direct_and_no_relay_or_capture_starts_implicitly(self):
         self.assertEqual(self.app.connection_mode.get(), "Connexion directe")
