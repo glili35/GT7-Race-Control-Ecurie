@@ -63,6 +63,17 @@ class PilotSession:
         return self._running
 
     @property
+    def recording_active(self) -> bool:
+        """Indique si le worker possède encore un CSV, même après stop().
+
+        Un disque bloqué peut dépasser le délai de fermeture de stop().
+        Une mise à jour doit attendre la fin réelle de ce worker avant de
+        fermer l'application. Cette lecture ne bloque pas le thread graphique.
+        """
+        writer = self._writer
+        return writer is not None and writer.is_alive()
+
+    @property
     def rows_written(self) -> int:
         with self._stats_lock:
             return self._rows_written

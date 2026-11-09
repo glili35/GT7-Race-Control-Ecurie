@@ -209,6 +209,37 @@ class RuntimeTests(unittest.TestCase):
                 self.session.stop()
         self.assertEqual(self.session.rows_written, 2)
 
+    def test_recording_stays_active_after_stop_timeout_until_csv_is_closed(self):
+        entered = threading.Event()
+        release = threading.Event()
+        real_record = __import__("racecontrol.runtime", fromlist=["GT7CSVRecorder"]).GT7CSVRecorder.record
+
+        def blocked_record(recorder, telemetry):
+            entered.set()
+            release.wait(2)
+            real_record(recorder, telemetry)
+
+        self.session.WRITER_STOP_TIMEOUT = 0.01
+        with patch("racecontrol.runtime.GT7CSVRecorder.record", new=blocked_record):
+            try:
+                self.session.start("192.168.0.44")
+                FakeReceiver.instances[-1].emit(sample(123))
+                self.assertTrue(entered.wait(1))
+                self.session.stop()
+                self.assertFalse(self.session.running)
+                self.assertTrue(self.session.recording_active)
+                self.assertEqual(self.session.rows_written, 0)
+                release.set()
+                self.session._writer.join(timeout=1)
+                self.assertFalse(self.session.recording_active)
+                with self.session.file_path.open(encoding="utf-8", newline="") as stream:
+                    rows = list(csv.DictReader(stream, delimiter=";"))
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(float(rows[0]["speed_kmh"]), 123)
+            finally:
+                release.set()
+                self.session.stop()
+
     def test_discovery_is_explicit_none_and_status_failure_is_contained(self):
         self.session.on_status = lambda text: (_ for _ in ()).throw(RuntimeError("Tk fermé"))
         self.session.start(None, record=False)

@@ -40,8 +40,8 @@ function Test-ApplicationStartup {
             throw "Le test n'a pas produit son rapport : $reportPath"
         }
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($report.ok -ne $true -or $report.version -ne "0.6.0") {
-            throw "Le rapport ne confirme pas le démarrage de la version 0.6.0."
+        if ($report.ok -ne $true -or $report.version -ne "0.7.0") {
+            throw "Le rapport ne confirme pas le démarrage de la version 0.7.0."
         }
         Write-Host "Démarrage de l'interface vérifié : $ApplicationPath"
         Write-Host "Rapport : $reportPath"

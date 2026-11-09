@@ -20,6 +20,7 @@ from racecontrol.runtime import PilotSession
 from racecontrol.transport import EngineerHub, check_invitation
 from racecontrol.local_trial import LocalTrial
 from racecontrol.track_matcher import TrackMatcher
+from racecontrol.update_ui import UpdatePanel
 
 BG = "#0c1420"
 PANEL = "#152233"
@@ -181,6 +182,9 @@ class RaceControlApp:
         self.demo = False
         self.demo_start = 0.
         self.closed = False
+        self._closing = False
+        self._retired_pilots = []
+        self.updates = None
         self.busy = False
         self.catalog_busy = False
         self.events = queue.Queue(maxsize=200)
@@ -250,6 +254,7 @@ class RaceControlApp:
         tk.Label(top, text="GT7  /  RACE CONTROL ÉCURIE", bg=BG, fg=FG,
                  font=(FONT, 21, "bold")).pack(side="left")
         ttk.Button(top, text="Démonstration", command=self.toggle_demo).pack(side="right")
+        ttk.Button(top, text="Mises à jour", command=self.open_updates).pack(side="right", padx=8)
         tk.Label(top, text=f"{__version__} TEST", bg=BG, fg=COLORS[0], font=(FONT, 10, "bold")).pack(side="right", padx=18)
         self.banner = tk.Label(self.root, text="", bg="#533b12", fg="#ffe2a3",
                                font=(FONT, 11, "bold"), pady=7)
@@ -266,6 +271,10 @@ class RaceControlApp:
         self.journal = tk.Text(journal, bg=PANEL, fg=MUTED, insertbackground=FG,
                                font=("Consolas", 10), relief="flat", state="disabled", wrap="word")
         self.journal.pack(fill="both", expand=True)
+        self.updates = UpdatePanel(self.tabs, data_dir=self.data_dir,
+                                   can_install=self.update_install_blocker,
+                                   on_installed=self.close, log=self.log)
+        self.tabs.add(self.updates, text="Mises à jour")
         footer = tk.Frame(self.root, bg=BG, padx=20, pady=9)
         footer.pack(fill="x")
         tk.Label(footer, textvariable=self.summary, bg=BG, fg=MUTED,
@@ -420,6 +429,8 @@ class RaceControlApp:
         self.post("pilot_message", text)
 
     def work(self, operation, success, *, catalog=False):
+        if self._closing or (self.updates is not None and self.updates.installing):
+            return
         if (catalog and self.catalog_busy) or (not catalog and self.busy):
             return
         if catalog:
@@ -515,6 +526,7 @@ class RaceControlApp:
         if self.pilot and self.pilot.running:
             self.work(self.pilot.stop, lambda _: self._pilot_stopped())
             return
+        self.remember_recording(self.pilot)
         ip = self.ps5_ip.get().strip()
         if ip:
             try:
@@ -574,8 +586,10 @@ class RaceControlApp:
             return
         if self.local_trial:
             trial = self.local_trial
+            retained_pilot = trial.pilot
 
             def stopped(_):
+                self.remember_recording(retained_pilot)
                 self.local_trial = None
                 self.pilot = None
                 self._hub_stopped()
@@ -589,6 +603,7 @@ class RaceControlApp:
         if self.demo or self.hub or (self.pilot and self.pilot.running):
             messagebox.showinfo("Essai complet", "Arrête les connexions ou la démonstration avant de commencer l'essai complet.", parent=self.root)
             return
+        self.remember_recording(self.pilot)
         try:
             ip = self._validated_ps5_ip()
         except ValueError:
@@ -854,6 +869,10 @@ class RaceControlApp:
     def tick(self):
         if self.closed:
             return
+        if self.updates is not None:
+            self.updates.poll()
+            if self.closed:
+                return
         for _ in range(100):
             try:
                 kind, value = self.actions.get_nowait()
@@ -956,8 +975,37 @@ class RaceControlApp:
         else:
             messagebox.showinfo("Sessions", str(path), parent=self.root)
 
+    def open_updates(self):
+        if self._closing:
+            return
+        self.tabs.select(self.updates)
+        self.updates.check()
+
+    def remember_recording(self, pilot):
+        if pilot is not None and getattr(pilot, "recording_active", False):
+            if pilot not in self._retired_pilots:
+                self._retired_pilots.append(pilot)
+
+    def update_install_blocker(self):
+        if self._closing:
+            return "L'application est en cours de fermeture."
+        if self.busy or self.catalog_busy:
+            return "Attends la fin de l'action en cours avant l'installation."
+        if self.hub is not None or self.local_trial is not None or (self.pilot and self.pilot.running):
+            return "Arrête la capture et ferme la réception ingénieur avant d'installer la mise à jour."
+        self._retired_pilots = [p for p in self._retired_pilots if getattr(p, "recording_active", False)]
+        if getattr(self.pilot, "recording_active", False) or self._retired_pilots:
+            return "Le fichier de session est encore en cours de fermeture. Patiente avant l'installation."
+        for window, _ in self.legacy_windows:
+            try:
+                if window.winfo_exists():
+                    return "Ferme l'interface historique avant l'installation."
+            except tk.TclError:
+                pass
+        return None
+
     def open_legacy(self):
-        if self.busy or self.catalog_busy or self.hub or self.demo or (self.pilot and self.pilot.running):
+        if self._closing or (self.updates and self.updates.installing) or self.busy or self.catalog_busy or self.hub or self.demo or (self.pilot and self.pilot.running):
             messagebox.showinfo("Interface historique", "Arrête les connexions et la démonstration avant d'ouvrir l'ancienne interface.", parent=self.root)
             return
         from race_control_live_V4_INTERFACE import RaceControlLive
@@ -975,6 +1023,12 @@ class RaceControlApp:
     def close(self):
         if self.closed:
             return
+        self._closing = True
+        if self.updates is not None:
+            self.updates.request_close()
+            if self.updates.busy:
+                self.root.after(100, self.close)
+                return
         if self.busy or self.catalog_busy:
             self._bulk_cancel.set()
             self.root.after(200, self.close)

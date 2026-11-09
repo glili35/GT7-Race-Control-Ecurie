@@ -1,4 +1,4 @@
-# GT7 Race Control Écurie — 0.6.0 Test
+# GT7 Race Control Écurie — 0.7.0 Test
 
 Un poste ingénieur pour réunir les télémétries de **quatre pilotes GT7**, chacun
 avec sa PlayStation et son PC Windows. La même application propose un mode
@@ -8,12 +8,13 @@ pilote, un mur des stands et une démonstration clairement identifiée.
 
 ## Télécharger et lancer sur Windows
 
-1. Ouvrir l'onglet **Actions** du dépôt et la dernière exécution verte
-   **Vérifier et construire GT7 Race Control**, sur la branche `codex/race-control-0.5`.
-2. Dans **Artifacts**, télécharger `GT7-Race-Control-Ecurie-Windows-0.6.0-test`.
-3. Décompresser le téléchargement et lancer
-   `GT7-Race-Control-Ecurie-Setup-0.6.0-test.exe`.
-4. Ouvrir **GT7 Race Control Écurie (Test)** depuis le menu Démarrer.
+1. Télécharger [l'installateur Windows 0.7.0 Test](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/download/test-v0.7.0/GT7-Race-Control-Ecurie-Setup-0.7.0-test.exe).
+2. Fermer la version en cours, puis lancer `GT7-Race-Control-Ecurie-Setup-0.7.0-test.exe`.
+3. Ouvrir **GT7 Race Control Écurie (Test)** depuis le menu Démarrer.
+
+L'installateur et l'archive portable sont disponibles dans la
+[publication Test 0.7.0](https://github.com/glili35/GT7-Race-Control-Ecurie/releases/tag/test-v0.7.0),
+sans compte GitHub. Les artifacts de compilation restent disponibles dans Actions.
 
 Python et les bibliothèques sont inclus. L'installateur n'est pas signé.
 Le canal Test utilise un dossier et un identifiant différents de la version
@@ -24,9 +25,31 @@ Le bouton **Démonstration** présente quatre voitures fictives et une carte fic
 sans connexion PS5, transmission réseau ni enregistrement de session.
 Un bandeau indique ce mode en permanence.
 
-La version 0.6 met à jour le canal Test 0.5 en conservant son profil. La réception
-locale d'une PS5 réelle a été confirmée par l'utilisateur avec la version 0.5.
-Les nouvelles fonctions doivent encore être essayées avec son matériel.
+La version 0.7 met à jour le canal Test existant en conservant son profil.
+La réception PS5 et l'essai complet sur un seul PC de la version 0.6 ont été
+confirmés par l'utilisateur. La version 0.7 conserve ces fonctions.
+
+## Mises à jour depuis le logiciel
+
+La version 0.7 apporte le bouton **Mises à jour** :
+
+1. Cliquer **Mises à jour**, ou ouvrir l'onglet du même nom.
+2. Le logiciel vérifie les publications publiques du canal Test. S'il est à jour,
+   la version courante est indiquée ; sinon, les évolutions proposées apparaissent.
+3. Arrêter les captures et la réception, puis cliquer **Télécharger et installer**.
+4. Le logiciel télécharge le fichier, vérifie sa taille et son empreinte, puis
+   ouvre l'assistant Windows. L'application se ferme après le lancement réussi
+   de l'installateur. Terminer l'assistant pour rouvrir la nouvelle version.
+
+Il faut installer manuellement 0.7 une première fois pour obtenir ce mécanisme.
+Les versions suivantes pourront être récupérées depuis ce bouton, sans passer
+par les pages GitHub. Aucun téléchargement ni lancement n'est effectué au démarrage.
+La recherche et le téléchargement s'exécutent en arrière-plan ; le téléchargement
+peut être annulé. Si une capture démarre entre-temps, le fichier reste prêt et
+l'installation attend son arrêt et la fermeture complète du CSV.
+
+Les sessions, circuits, invitations et réglages restent dans le même profil local.
+La publication reste un canal de test, distinct d'une version stable officielle.
 
 ## Premier essai avec une PS5
 
@@ -145,7 +168,7 @@ automatique de carte sur une simple position.
 Les couleurs des pneus sont indicatives. La stratégie carburant estime des
 besoins sur les courses au nombre de tours ; elle ne décide pas d'un arrêt et ne
 modélise pas encore la fin des courses chronométrées. Le déplacement libre des
-widgets, les mises à jour automatiques et une publication stable restent à faire.
+widgets et une publication stable restent à faire.
 
 ## Données et configuration
 
@@ -182,6 +205,16 @@ essais avec quatre PS5 réelles ni une validation Internet**.
 La chaîne Windows vérifie aussi que l'EXE portable et l'EXE installé ouvrent
 réellement l'interface et produisent un rapport de démarrage. La compilation
 seule ne suffit pas à valider le logiciel en course.
+
+Les tests des mises à jour couvrent notamment les fichiers altérés, les versions
+antérieures, l'annulation, les sessions en cours et le lancement de l'installateur.
+Après les contrôles Windows, le CI publie une préversion immuable sur le commit
+testé puis utilise le vrai client, sans authentification, pour télécharger et
+vérifier l'installateur public. Il n'exécute pas cet installateur une deuxième fois.
+
+Pour publier une évolution, augmenter le numéro de version et les noms de fichiers
+dans le packaging avant de pousser la branche de test. Une version déjà publiée
+n'est jamais écrasée : son tag et ses fichiers doivent rester identiques.
 
 Source du catalogue :
 [GT7 Datalogger Track Data](https://github.com/jbhoorasingh/gt7-datalogger-track-data),

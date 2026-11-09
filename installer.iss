@@ -1,5 +1,5 @@
 #define AppName "GT7 Race Control Écurie (Test)"
-#define AppVersion "0.6.0"
+#define AppVersion "0.7.0"
 #define AppExe "GT7-Race-Control-Ecurie.exe"
 
 [Setup]
@@ -8,7 +8,7 @@ AppId={{8D4D0B18-56DC-4F66-B286-CE425D978ED2}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
-VersionInfoVersion=0.6.0.0
+VersionInfoVersion=0.7.0.0
 DefaultDirName={localappdata}\Programs\GT7 Race Control Ecurie Test
 DefaultGroupName={#AppName}
 OutputDir=Output

@@ -1,5 +1,16 @@
 # Historique
 
+## 0.7.0 Test
+
+- Ajoute les mises à jour depuis le logiciel : recherche, présentation de la
+  nouvelle version, téléchargement puis assistant d'installation Windows.
+- Conserve les réglages, invitations, circuits et sessions du canal Test.
+- Bloque l'installation tant qu'une capture, une réception ou la fermeture
+  d'un fichier de session sont encore en cours.
+- Permet d'annuler le téléchargement et conserve l'application ouverte en cas d'erreur.
+- Publie les installateurs Test vérifiés avec un lien de téléchargement public,
+  sans compte GitHub nécessaire pour les utilisateurs.
+
 ## 0.6.0 Test
 
 - Ajoute un essai complet sur un seul PC avec la vraie PS5 : capture locale,
