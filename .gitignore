@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+Output/
+*.spec
+sessions/
+*.pem
+*credentials*.json
+.smoke-profile/
+smoke-report.json

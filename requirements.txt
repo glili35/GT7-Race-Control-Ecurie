@@ -1,0 +1,3 @@
+# Dépendances embarquées dans l'application Windows.
+pycryptodome>=3.20,<4
+cryptography>=43,<51
